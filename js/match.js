@@ -264,10 +264,11 @@ function startPoint() {
   const sx = srv === 0 ? (deuce ? 1 : -1) : (deuce ? -1 : 1);
   const box = { sx: -sx, side: 1 - srv };
   const server = srv === 0 ? P : A, recv = srv === 0 ? A : P, ss = sideSign(srv);
-  server.x = sx * .9; server.y = ss * (HL + .25);
-  recv.x = -sx * 2.4; recv.y = -ss * (HL + .9);
-  toss = { t0: now + (srv === 0 ? .7 : 1.1), server: srv, box, jit: rnd(-.05, .05) };
-  Object.assign(ball, { x: server.x + .35 * ss, y: server.y, z: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, vis: true, roll: false, cord: false, fire: false });
+  // 双方走回发球/接发位置（不再瞬移），站定后发球方拍两下球再抛球
+  const spots = { [srv]: { x: sx * .9, y: ss * (HL + .25) }, [1 - srv]: { x: -sx * 2.4, y: -ss * (HL + .9) } };
+  const walkT = Math.max(Math.hypot(server.x - spots[srv].x, server.y - spots[srv].y), Math.hypot(recv.x - spots[1 - srv].x, recv.y - spots[1 - srv].y)) / 3.2;
+  toss = { t0: now + Math.max(srv === 0 ? 1.1 : 1.5, walkT + 1.1), server: srv, box, jit: rnd(-.05, .05), spots, walking: { 0: true, 1: true }, lastU: 0 };
+  Object.assign(ball, { x: server.x + .3 * ss, y: server.y, z: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, vis: true, roll: false, cord: false, fire: false });
   say(srv === 0 ? (sc.faults ? '二发 · 稳一点' : '你发球 · 拖得越长越用力') : (sc.faults ? `${M.opp.name} 二发` : `${M.opp.name} 发球`));
   if (!sc.faults) { const bp = bigPoint(); if (bp) emit('bigpoint', bp) }
   emit('pointStart'); emit('hud');
@@ -285,8 +286,13 @@ function bigPoint() {
 }
 function updateToss() {
   const t = now - toss.t0, server = toss.server === 0 ? P : A;
-  ball.x = server.x + .35 * sideSign(toss.server); ball.y = server.y;
-  ball.z = t < 0 ? 1 : Math.max(1, 1 + 6.26 * t - 4.9 * t * t);
+  ball.x = server.x + .3 * sideSign(toss.server); ball.y = server.y;
+  if (t < 0 && t > -1 && !toss.walking[toss.server]) {          // 发球前拍球两下
+    const u = ((t + 1) / .5) % 1;
+    ball.z = .95 * (2 * u - 1) * (2 * u - 1);
+    if (toss.lastU < .5 && u >= .5) emit('dribble', { side: toss.server });
+    toss.lastU = u;
+  } else ball.z = t < 0 ? 1 : Math.max(1, 1 + 6.26 * t - 4.9 * t * t);
   if (toss.server === 1 && t >= TOSS_IDEAL + toss.jit) serve(1, 0, null);
   else if (toss.server === 0 && t > 1.3) { toss.t0 = now + .7; say('重新抛球 · 球下落时松手') }
 }
@@ -333,8 +339,11 @@ function onBallEvent(ev) {
   if (ev === 'cord') { R.cord = true; emit('cord', { x: ball.x }); pop('擦网!', ball.x, 0, 1.6, '#ffd27a'); return }
   if (ev === 'bounce') {
     if (R.bounces === 0) {
-      const ok = (ball.y > 0 ? 0 : 1) !== h && (R.serve ? inBox(ball.x, ball.y, R.box) : inCourt(ball.x, ball.y));
+      const rightSide = (ball.y > 0 ? 0 : 1) !== h, e = lineMargin(ball.x, ball.y);
+      const ok = rightSide && (R.serve ? inBox(ball.x, ball.y, R.box) : inCourt(ball.x, ball.y));
       emit('bounce', { x: ball.x, y: ball.y, ok });
+      if (rightSide && Math.abs(e) < .05) { emit('close'); emit('hawkeye', { x: ball.x, y: ball.y, e, ok, serve: R.serve, box: R.box }) }
+      if (!ok && !R.serve) emit('linecall', { text: 'Out!' });
       if (!ok) { pop('OUT', ball.x, ball.y, .9, '#ff7a7a', true); R.serve ? fault('Fault') : endPoint(1 - h, 'out'); return }
       if (R.serve && R.cord) {           // 发球擦网落进发球区：Let，重发（不算失误）
         pop('LET', ball.x, ball.y, 1.2, '#ffd27a', true); say('擦网 Let · 重发'); emit('call', { text: 'Let' });
@@ -343,6 +352,11 @@ function onBallEvent(ev) {
       R.bounces = 1;
     } else { emit('bounce', { x: ball.x, y: ball.y, ok: true, second: true }); endPoint(h, R.serve ? 'ace' : 'winner') }
   }
+}
+// 落点离最近边线的距离（米）：>0 出界，<0 界内（球与线有接触即算界内）
+function lineMargin(x, y) {
+  if (R.serve) return Math.max(Math.abs(y) - SVC, -x * R.box.sx, Math.abs(x) - HW) - .04;
+  return Math.max(Math.abs(x) - HW, Math.abs(y) - HL) - .04;
 }
 function fault(call) {
   if (sc.faults === 0) {
@@ -419,10 +433,30 @@ function moveTo(o, tx, ty, sp, dt) {
   if (d > 1e-6) { o.x += dx / d * m; o.y += dy / d * m }
   o.run = m / dt; return m;
 }
+// 击球站位：球在拍子那一侧（右手持拍），而不是撞在身上
+function hitSpot(pl, o, side) {
+  const off = pl.kind === 'smash' ? .35 : pl.kind === 'volley' ? .5 : .72;
+  if (pl.fore === undefined) pl.fore = side === 0 ? o.x <= pl.x + .3 : o.x >= pl.x - .3;
+  const right = side === 0 ? 1 : -1;                       // 球员右手在世界坐标的哪一侧
+  return { x: pl.x - right * off * (pl.fore ? 1 : -1), y: pl.y + sideSign(side) * .25 };
+}
 function movePlayers(dt) {
-  if (phase === 'serve' || phase === 'idle' || phase === 'over') { P.run = A.run = 0; return }
+  if (phase === 'idle' || phase === 'over') { P.run = A.run = 0; return }
+  if (phase === 'serve') {
+    if (!toss) return;
+    for (const side of [0, 1]) {
+      const o = side === 0 ? P : A, s = toss.spots[side];
+      if (toss.walking[side]) { moveTo(o, s.x, s.y, 3.2, dt); if (Math.hypot(o.x - s.x, o.y - s.y) < .03) { toss.walking[side] = false; o.run = 0 } }
+      else o.run = 0;
+    }
+    return;
+  }
+  if (phase === 'dead') {                                  // 一分结束：慢慢走回底线中间
+    moveTo(P, P.x * .7, clamp(P.y, HL - 1, HL + 1.5), 2, dt); moveTo(A, A.x * .7, clamp(A.y, -HL - 1.5, -HL + 1), 2, dt);
+    return;
+  }
   let tx, ty, react = false;
-  if (phase === 'rally' && plan && plan.side === 0) { tx = plan.x; ty = plan.y + .25; react = now - plan.made < P_REACT }
+  if (phase === 'rally' && plan && plan.side === 0) { const h = hitSpot(plan, P, 0); tx = h.x; ty = h.y; react = now - plan.made < P_REACT }
   else if (P.manual) { tx = P.manual.x; ty = P.manual.y }
   else { tx = P.x * .4; ty = netMode ? 3.6 : HL + .9 }
   const m = react ? (P.run = 0) : moveTo(P, tx, ty, moveSpeed(), dt);
@@ -431,7 +465,7 @@ function movePlayers(dt) {
   P.st = clamp(P.st - m * .9 * PS.drain * (U.flashT > 0 || U.dash ? .3 : 1) + (m < .01 ? dt * 3 : 0), 0, 100);
   const L = M.ai, aSpd = M.type === 'train' ? 14 : L.move;
   if (phase === 'rally' && plan && plan.side === 1) {
-    if (now - plan.made >= L.react) moveTo(A, plan.x, plan.y - .25, aSpd, dt); else A.run = 0;
+    if (now - plan.made >= L.react) { const h = hitSpot(plan, A, 1); moveTo(A, h.x, h.y, aSpd, dt) } else A.run = 0;
   } else moveTo(A, A.x * .4, -HL - .9, aSpd * .7, dt);
   A.y = clamp(A.y, -HL - 4, -.8); A.x = clamp(A.x, -7, 7);
 }

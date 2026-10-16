@@ -4,7 +4,7 @@ const SAVE_KEY = 'ts2026v6';
 function defaultSave() {
   return { coins: 200, gear: { power: 1, control: 1, agility: 1, stamina: 1, serve: 1 }, outfit: 'sig', owned: ['sig'], char: 'kai', chars: ['kai'],
     career: [0, 0, 0, 0], trophies: 0, wins: 0, losses: 0, bestRally: 0, bestCombo: 0, aces: 0, fastest: 0,
-    settings: { sound: true, voice: true, vibe: true, hq: true }, tutorial: false, quick: { arena: 0, diff: 0, len: 3 } };
+    settings: { sound: true, voice: true, vibe: true, hq: true, crowd: 1 }, tutorial: false, quick: { arena: 0, diff: 0, len: 3 } };
 }
 let SAVE = (() => {
   const d = defaultSave();

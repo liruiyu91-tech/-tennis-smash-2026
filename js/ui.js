@@ -28,7 +28,7 @@ const UI = (() => {
   const starHtml = t => { const n = 1 + Math.round(t * 4); return `<span class="stars" aria-label="${n} 星">${IC.star.repeat(n)}</span>` };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let screen = 'home', lastMatch = null, aim = null, touch = null, swipeTrail = [], popups = [], tutorialOpen = false;
-  let blocking = null, pendingReplay = null, lastReplayAt = -99, bigNow = null;
+  let blocking = null, pendingReplay = null, lastReplayAt = -99, bigNow = null, hawk = null;
   const img = (id, mood, cls = '') => `<img class="pt ${cls}" src="${portrait(id, mood)}" alt="" draggable="false">`;
   const oppBh = o => o.style === 'serve' || o.style === 'defender' && o.t > .5 ? 'one' : 'two';
 
@@ -40,7 +40,7 @@ const UI = (() => {
     screen = name;
     $('hud').classList.toggle('hidden', name !== 'match');
     root.innerHTML = '';
-    if (name !== 'match') { Scene3D.setMode('menu'); Scene3D.setAim(null); Sfx.setCrowd(0) }
+    if (name !== 'match') { Scene3D.setMode('menu'); Scene3D.setAim(null); Sfx.enterMenu(); hawk = null }
     ({ home, career, quick, gear, settings, vs, chars, match: () => {} })[name](arg);
     layoutSafe();
   }
@@ -162,6 +162,10 @@ const UI = (() => {
       c.onclick = click(() => { SAVE.settings[k] = !SAVE.settings[k]; persist(); applySettings(); c.querySelector('.sw-t').classList.toggle('on', SAVE.settings[k]) });
       list.appendChild(c);
     });
+    const cv = el(`<div class="card"><div class="toggle" style="min-height:40px"><span>观众声音</span></div><div class="seg" id="crowdSeg" style="grid-template-columns:repeat(4,1fr)">${['关', '低', '中', '高'].map((n, i) => `<button data-i="${i}">${n}</button>`).join('')}</div></div>`);
+    const updC = () => cv.querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.i === SAVE.settings.crowd));
+    cv.querySelectorAll('button').forEach(b => b.onclick = click(() => { SAVE.settings.crowd = +b.dataset.i; persist(); Sfx.setCrowdVolume(SAVE.settings.crowd); updC() })); updC();
+    list.appendChild(cv);
     const rec = el(`<div class="card" style="line-height:1.9;font-size:14px">
       <b>生涯数据</b><br>战绩 ${SAVE.wins} 胜 ${SAVE.losses} 负 · 奖杯 ${SAVE.trophies}<br>最快球速 ${SAVE.fastest} km/h · ACE ${SAVE.aces}<br>最长连击 ${SAVE.bestCombo} · 训练最长回合 ${SAVE.bestRally} 拍</div>`);
     list.appendChild(rec);
@@ -405,6 +409,44 @@ const UI = (() => {
   }
   function endReplayUI() { clearOverlays(); if (blocking === 'replay') blocking = null; if (screen === 'match') $('hud').classList.remove('hidden') }
 
+  // ---------- 鹰眼：压线球自动回放落点判定 ----------
+  function showHawk(e) {
+    const vert = R && R.serve ? (Math.abs(e.x) - HW > Math.abs(e.y) - SVC || -e.x * e.box.sx > Math.abs(e.y) - SVC) : Math.abs(e.x) - HW > Math.abs(e.y) - HL;
+    hawk = { t: 0, e: e.e, ok: e.ok, vert, said: false }; $('say').style.opacity = 0;
+    blocking = 'hawkeye';
+  }
+  function drawHawk(dt) {
+    hawk.t += dt;
+    const W = innerWidth, H = innerHeight, pw = Math.min(W - 32, 340), ph = 230, x0 = (W - pw) / 2, y0 = Math.max(70, H * .42 - ph / 2);
+    const a = Scene3D.arena, S = 1100;                    // 像素 / 米（放大看厘米级差距）
+    const k = clamp(hawk.t / .25, 0, 1);
+    octx.save(); octx.globalAlpha = k;
+    octx.fillStyle = 'rgba(8,14,34,.94)'; octx.beginPath(); octx.roundRect ? octx.roundRect(x0, y0, pw, ph, 18) : octx.rect(x0, y0, pw, ph); octx.fill();
+    octx.font = 'italic 900 15px "Arial Black",sans-serif'; octx.fillStyle = '#d7f94a'; octx.textAlign = 'left'; octx.fillText('HAWK-EYE', x0 + 16, y0 + 24);
+    // 画面：界内场地 | 白线（5cm）| 界外
+    const cx = x0 + pw / 2, cy = y0 + 128, lineW = .05 * S;
+    octx.save(); octx.beginPath(); octx.rect(x0 + 12, y0 + 40, pw - 24, ph - 92); octx.clip();
+    octx.fillStyle = a.apron; octx.fillRect(x0, y0, pw, ph);
+    octx.fillStyle = a.court; octx.fillRect(x0, y0, cx - x0, ph);
+    octx.fillStyle = '#f4f4f4'; octx.fillRect(cx - lineW, y0, lineW, ph);
+    // 球印：中心距线外沿 c = e + 0.04；落下时从大到小
+    const c = (hawk.e + .04) * S, drop = clamp((hawk.t - .25) / .5, 0, 1), r = .033 * S;
+    octx.fillStyle = 'rgba(0,0,0,.25)'; octx.beginPath(); octx.ellipse(cx + c, cy, r * (2 - drop), r * .55 * (2 - drop), 0, 0, Math.PI * 2); octx.fill();
+    if (drop >= 1) { octx.fillStyle = 'rgba(160,190,40,.85)'; octx.beginPath(); octx.ellipse(cx + c, cy, r * 1.15, r * .7, 0, 0, Math.PI * 2); octx.fill() }
+    octx.fillStyle = '#e4ff4f'; octx.strokeStyle = '#3a4a00'; octx.lineWidth = 2;
+    octx.beginPath(); octx.arc(cx + c, cy - (1 - drop) * 60, r * .9, 0, Math.PI * 2); octx.fill(); octx.stroke();
+    octx.restore();
+    if (hawk.t > .9) {
+      octx.textAlign = 'center'; octx.font = 'italic 900 30px "Arial Black",sans-serif';
+      octx.fillStyle = hawk.ok ? '#5fe07a' : '#ff5a4f'; octx.fillText(hawk.ok ? 'IN' : 'OUT', cx, y0 + ph - 22);
+      octx.font = '800 13px sans-serif'; octx.fillStyle = '#9fb0d9';
+      octx.fillText(hawk.ok ? `压线 ${Math.max(.1, -hawk.e * 100).toFixed(1)} cm` : `出界 ${Math.max(.1, hawk.e * 100).toFixed(1)} cm`, cx, y0 + ph - 4 - 0);
+      if (!hawk.said) { hawk.said = true; Sfx.onEvent('hawk', { ok: hawk.ok }) }
+    }
+    octx.restore();
+    if (hawk.t > 2.3) { hawk = null; if (blocking === 'hawkeye') blocking = null }
+  }
+
   // ---------- 游戏事件 ----------
   function onEvent(type, e) {
     if (type === 'say') sayText(e.text);
@@ -414,6 +456,7 @@ const UI = (() => {
     else if (type === 'hit' && e.side === 0) vibrate(e.q === 'perfect' ? 30 : 12);
     else if (type === 'matchOver') matchOver(e.w);
     else if (type === 'ult') cutin(e);
+    else if (type === 'hawkeye' && M && M.type !== 'train') showHawk(e);
     else if (type === 'bigpoint') bigPointAlert(e);
     else if (type === 'point') { hud(); onPoint(e) }
     else if (type === 'matchStart' || type === 'game') hud();
@@ -500,6 +543,7 @@ const UI = (() => {
     octx.globalAlpha = 1;
     if (screen === 'match') {
       const m = $('stM').firstElementChild; m.style.transform = `scaleX(${P.st / 100})`;
+      if (hawk) drawHawk(dt);
       if (pendingReplay && !blocking && now >= pendingReplay.at && phase === 'dead') runReplay();
       if (touch && aim && serving()) drawPower(aim.tap ? .6 : aim.d);
       if (touch && aim && Math.abs(aim.curve) > .25 && !serving()) { octx.font = 'italic 900 16px "Arial Black",sans-serif'; octx.fillStyle = '#9fd8ff'; octx.fillText(aim.curve > 0 ? '弧线 ↷' : '↶ 弧线', touch.x, touch.y - 40) }
