@@ -8,15 +8,21 @@ const src = fs.readFileSync(path.join(__dirname, '../js/scene.js'), 'utf8');
 const a = src.indexOf('  const R0 = '), b = src.indexOf('  // 挥拍时间轴');
 const POSES = new Function(src.slice(a, b) + '\nreturn POSES;')();
 
-// 与 makePlayer 相同的骨架
+// 与 makePlayer 相同的代理骨架：尺寸取真人模型（1.82 m 男性）的关节位置
+const hm = new Function(fs.readFileSync(path.join(__dirname, '../js/human-data.js'), 'utf8') + '\nreturn HUMAN_META;')();
+const HV = hm.variants.m_mix, SC = 1.82 / HV.height, JP = n => HV.bonePos[hm.bones.findIndex(b => b.name === n)].map(c => c * SC);
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const DIM = { hipH: JP('hips')[1], torso: [0, JP('spine')[1] - JP('hips')[1], JP('spine')[2] - JP('hips')[2]],
+  sh: s => { const u = JP(s < 0 ? 'upperarm.R' : 'upperarm.L'); return [u[0], u[1] - JP('spine')[1], u[2] - JP('spine')[2]] },
+  upArm: dist(JP('upperarm.R'), JP('lowerarm.R')), foreArm: dist(JP('lowerarm.R'), JP('hand.R')) };
 const root = new THREE.Group(), hips = new THREE.Group(), torso = new THREE.Group();
-root.add(hips); hips.add(torso); torso.position.y = .06;
-const arm = s => { const sh = new THREE.Group(); sh.position.set(s * .24, .5, 0); torso.add(sh); const el = new THREE.Group(); el.position.y = -.3; sh.add(el); const hand = new THREE.Group(); hand.position.y = -.3; el.add(hand); return { sh, el, hand } };
+root.add(hips); hips.add(torso); torso.position.set(...DIM.torso);
+const arm = s => { const sh = new THREE.Group(); sh.position.set(...DIM.sh(s)); torso.add(sh); const el = new THREE.Group(); el.position.y = -DIM.upArm; sh.add(el); const hand = new THREE.Group(); hand.position.y = -DIM.foreArm; el.add(hand); return { sh, el, hand } };
 const R = arm(-1), L = arm(1);
 const head = new THREE.Object3D(); head.position.y = -.41; R.hand.add(head);
 const v = new THREE.Vector3(), w = new THREE.Vector3();
 function fk(p, q) {
-  hips.position.y = .95 - p.crouch + p.jump; hips.rotation.set(0, q.hipY ?? p.hipY, 0); torso.rotation.set(p.torsoX, q.torsoY ?? p.torsoY, 0);
+  hips.position.y = DIM.hipH - p.crouch + p.jump; hips.rotation.set(0, q.hipY ?? p.hipY, 0); torso.rotation.set(p.torsoX, q.torsoY ?? p.torsoY, 0);
   R.sh.rotation.set(q.rShX, q.rShY, q.rShZ); R.el.rotation.x = q.rEl; R.hand.rotation.set(q.wrist, 0, q.wristZ);
   L.sh.rotation.set(q.lShX, q.lShY, q.lShZ); L.el.rotation.x = q.lEl;
   root.updateMatrixWorld(true);

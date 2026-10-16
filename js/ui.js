@@ -170,7 +170,7 @@ const UI = (() => {
       <b>生涯数据</b><br>战绩 ${SAVE.wins} 胜 ${SAVE.losses} 负 · 奖杯 ${SAVE.trophies}<br>最快球速 ${SAVE.fastest} km/h · ACE ${SAVE.aces}<br>最长连击 ${SAVE.bestCombo} · 训练最长回合 ${SAVE.bestRally} 拍</div>`);
     list.appendChild(rec);
     list.appendChild(el(`<div class="card" style="line-height:1.7;font-size:13px;color:var(--mute)"><b style="color:var(--text)">素材与鸣谢</b><br>
-      球员立绘：Avataaars，作者 Pablo Stanley（可免费商用），由 DiceBear（MIT 许可）生成<br>3D 引擎：three.js（MIT 许可）<br>音效、球场、球员模型与网球物理：本游戏原创程序生成</div>`));
+      球员立绘：Avataaars，作者 Pablo Stanley（可免费商用），由 DiceBear（MIT 许可）生成<br>球员 3D 模型：MakeHuman 系统资源（CC0 1.0，makehumancommunity/makehuman），经本游戏工具转换为蒙皮模型<br>3D 引擎：three.js（MIT 许可）<br>音效、球场、动作与网球物理：本游戏原创程序生成</div>`));
     const reset = el(`<button class="btn" style="color:#ff8a80">重置全部进度</button>`);
     reset.onclick = click(() => confirmBox('重置全部进度？', '金币、装备、球衣和巡回赛进度都会清空，不能恢复。', '重置', () => { resetSave(); applySettings(); Scene3D.setPlayerLook(playerLook(), myChar().bh); show('home') }));
     list.appendChild(reset);

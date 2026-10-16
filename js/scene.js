@@ -55,61 +55,164 @@ const Scene3D = (() => {
     resize(W, H, safe);
   }
 
-  // ---------- 球员模型（卡通风格，程序化骨骼）----------
+  // ---------- 球员模型 ----------
+  // 真人模型：MakeHuman CC0 人体网格 + 17 根骨骼蒙皮（数据见 js/human-data.js）。
+  // 动作仍由下面的"代理骨架"（hips/torso/肩/肘/腿 等 Group）计算，每帧把代理骨架的姿态重定向到真骨骼上。
+  const HUMAN = (() => {
+    if (typeof HUMAN_META === 'undefined') return null;
+    const raw = atob(HUMAN_BIN), u8 = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+    const view = (k, C) => new C(u8.buffer, HUMAN_META[k].off, HUMAN_META[k].len);
+    return { meta: HUMAN_META, index: view('index', Uint16Array), skinIndex: view('skinIndex', Uint8Array), skinWeight: view('skinWeight', Uint8Array),
+      region: view('region', Uint8Array), pos: v => view('pos_' + v, Int16Array) };
+  })();
+  const DEF_BODY = look => look.body || (look.long ? 'f_mix' : 'm_mix');
+  // 每根真骨骼由哪个代理节点驱动、代理的静止朝向（手臂腿朝下，躯干朝上，脚朝前）
+  // 躯干链（hips→spine→chest→neck→head）静止时本来就直立，不做对齐旋转，且整段跟随代理躯干转动，保证肩、头位置与代理骨架重合
+  const DRIVE = { hips: ['hips', 'up'], spine: ['torso', 'up'], chest: ['torso', 'up'], neck: ['torso', 'up'], head: ['head', 'up'],
+    'upperarm.R': ['shR', 'down'], 'lowerarm.R': ['elR', 'down'], 'hand.R': ['racket', 'down'], 'upperarm.L': ['shL', 'down'], 'lowerarm.L': ['elL', 'down'], 'hand.L': ['elL', 'down'],
+    'upperleg.R': ['thR', 'down'], 'lowerleg.R': ['knR', 'down'], 'foot.R': ['body', 'fwd'], 'upperleg.L': ['thL', 'down'], 'lowerleg.L': ['knL', 'down'], 'foot.L': ['body', 'fwd'] };
+  const REST_DIR = { up: new T.Vector3(0, 1, 0), down: new T.Vector3(0, -1, 0), fwd: new T.Vector3(0, 0, 1) };
+  function regionColors(look) {
+    const c = s => new T.Color(s), skin = c(look.skin), hair = c(look.hair || '#2a1a10');
+    const pal = [skin, c(look.shirt), c(look.shorts), c(look.sock || '#ffffff'), c(look.shoe || '#f2f2f2'), c('#2a2d33'), hair, c('#f2f2f0'), c(look.iris || '#3b2a1e'),
+      hair.clone().multiplyScalar(.75), skin.clone().lerp(c('#b5524f'), .35)];
+    return pal;
+  }
+  // 衣物区域的法线再平滑几遍：布料表面不留小褶皱造成的暗点
+  let NBR = null;
+  function smoothClothNormals(geo) {
+    const R = HUMAN.region, N = HUMAN.meta.N, n = geo.attributes.normal.array, I = HUMAN.index;
+    if (!NBR) { NBR = Array.from({ length: N }, () => []); for (let i = 0; i < I.length; i += 3) for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) if (a !== b) NBR[I[i + a]].push(I[i + b]) }
+    const cloth = []; for (let i = 0; i < N; i++) if (R[i] === 1 || R[i] === 2) cloth.push(i);
+    for (let it = 0; it < 6; it++) {
+      const out = new Float32Array(cloth.length * 3);
+      cloth.forEach((i, k) => { let x = n[i * 3], y = n[i * 3 + 1], z = n[i * 3 + 2]; for (const j of NBR[i]) { x += n[j * 3]; y += n[j * 3 + 1]; z += n[j * 3 + 2] } const l = Math.hypot(x, y, z) || 1; out[k * 3] = x / l; out[k * 3 + 1] = y / l; out[k * 3 + 2] = z / l });
+      cloth.forEach((i, k) => { n[i * 3] = out[k * 3]; n[i * 3 + 1] = out[k * 3 + 1]; n[i * 3 + 2] = out[k * 3 + 2] });
+    }
+  }
+  function buildHuman(look) {
+    const meta = HUMAN.meta, vn = DEF_BODY(look), V = meta.variants[vn] || meta.variants.m_mix;
+    const s = (look.h || (vn[0] === 'f' ? 1.7 : 1.82)) / V.height;
+    const q = HUMAN.pos(meta.variants[vn] ? vn : 'm_mix'), N = meta.N;
+    const pos = new Float32Array(N * 3); for (let i = 0; i < N * 3; i++) pos[i] = q[i] / 1000 * s;
+    const pal = regionColors(look), col = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { const p = pal[HUMAN.region[i]]; col[i * 3] = p.r; col[i * 3 + 1] = p.g; col[i * 3 + 2] = p.b }
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new T.BufferAttribute(col, 3));
+    geo.setAttribute('skinIndex', new T.BufferAttribute(HUMAN.skinIndex, 4));
+    geo.setAttribute('skinWeight', new T.BufferAttribute(HUMAN.skinWeight, 4, true));
+    geo.setIndex(new T.BufferAttribute(HUMAN.index, 1));
+    geo.computeVertexNormals();
+    smoothClothNormals(geo);
+    const P = V.bonePos.map(p => p.map(c => c * s));
+    const bones = meta.bones.map(() => new T.Bone()), byName = {};
+    meta.bones.forEach((b, i) => {
+      byName[b.name] = i;
+      const pi = b.parent ? meta.bones.findIndex(x => x.name === b.parent) : -1;
+      if (pi < 0) bones[i].position.set(...P[i]); else { bones[pi].add(bones[i]); bones[i].position.set(P[i][0] - P[pi][0], P[i][1] - P[pi][1], P[i][2] - P[pi][2]) }
+    });
+    const mat = new T.MeshLambertMaterial({ vertexColors: true });
+    const sm = new T.SkinnedMesh(geo, mat);
+    sm.add(bones[0]); sm.updateMatrixWorld(true);
+    sm.bind(new T.Skeleton(bones));
+    sm.castShadow = true; sm.frustumCulled = false;
+    // K：把真骨骼的静止朝向对齐到代理骨架静止朝向的旋转
+    const K = meta.bones.map((b, i) => DRIVE[b.name][1] === 'up' ? new T.Quaternion() : new T.Quaternion().setFromUnitVectors(new T.Vector3(...V.boneDir[i]), REST_DIR[DRIVE[b.name][1]]));
+    const parents = meta.bones.map(b => b.parent ? byName[b.parent] : -1);
+    return { sm, bones, K, parents, P, byName, eyeL: V.eyeL.map(c => c * s), headTop: V.headTop * s, band: V.band && { y: V.band.y * s, cz: V.band.cz * s, rx: V.band.rx * s, rz: V.band.rz * s } };
+  }
+  // 每帧：代理骨架（模型空间）→ 真骨骼
+  const qa = new T.Quaternion(), qb = new T.Quaternion(), qRootInv = new T.Quaternion(), vtmp = new T.Vector3();
+  function driveHuman(m) {
+    const H = m.human; if (!H) return;
+    m.root.updateMatrixWorld(true);
+    m.root.getWorldQuaternion(qRootInv).invert();
+    const src = m.proxy, Qs = H.Qs || (H.Qs = H.bones.map(() => new T.Quaternion()));
+    const modelQ = (o, out) => o.getWorldQuaternion(out).premultiply(qRootInv);
+    H.bones.forEach((bone, i) => {
+      const name = HUMAN.meta.bones[i].name, key = DRIVE[name][0];
+      if (key === 'spineMid') { modelQ(src.hips, qa); modelQ(src.torso, qb); qa.slerp(qb, .5); Qs[i].copy(qa) }
+      else if (key === 'neckMid') { modelQ(src.torso, qa); modelQ(src.head, qb); qa.slerp(qb, .4); Qs[i].copy(qa) }
+      else modelQ(src[key], Qs[i]);
+      Qs[i].multiply(H.K[i]);
+      const pi = H.parents[i];
+      if (pi < 0) bone.quaternion.copy(Qs[i]); else bone.quaternion.copy(qa.copy(Qs[pi]).invert().multiply(Qs[i]));
+    });
+    // 髋部位置跟随代理（下蹲、起跳、身体前倾）
+    src.hips.getWorldPosition(vtmp); m.root.worldToLocal(vtmp); H.bones[0].position.copy(vtmp);
+  }
   function cap(r, len, mat) { const g = new T.CapsuleGeometry(r, len, 4, 10); g.translate(0, -len / 2 - r * .3, 0); return mesh(g, mat) }
   function makePlayer(look) {
     const mats = { shirt: toon(look.shirt), shorts: toon(look.shorts), skin: toon(look.skin), hair: toon(look.hair || '#222'),
       shoe: toon('#f4f4f4'), band: toon(look.band || look.shirt), dark: toon('#1a1a1a'), racket: toon('#1d1f26'), frame: toon('#e8ff4f') };
+    const H = HUMAN ? buildHuman(look) : null;
+    // 代理骨架尺寸：有真人模型时取真骨骼的关节位置
+    const J = H ? n => H.P[H.byName[n]] : null, d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const dims = H ? {
+      hipH: J('hips')[1], thigh: n => [J('upperleg.' + n)[0], J('upperleg.' + n)[1] - J('hips')[1], J('upperleg.' + n)[2] - J('hips')[2]],
+      upLeg: d(J('upperleg.R'), J('lowerleg.R')), torso: [0, J('spine')[1] - J('hips')[1], J('spine')[2] - J('hips')[2]],
+      sh: n => [J('upperarm.' + n)[0], J('upperarm.' + n)[1] - J('spine')[1], J('upperarm.' + n)[2] - J('spine')[2]],
+      upArm: d(J('upperarm.R'), J('lowerarm.R')), foreArm: d(J('lowerarm.R'), J('hand.R')), head: [0, J('head')[1] - J('spine')[1], J('head')[2] - J('spine')[2]],
+    } : { hipH: .95, thigh: n => [n === 'R' ? -.1 : .1, -.1, 0], upLeg: .42, torso: [0, .06, 0], sh: n => [n === 'R' ? -.24 : .24, .5, 0], upArm: .3, foreArm: .3, head: [0, .76, 0] };
     const root = new T.Group(), body = new T.Group(); root.add(body);
-    const hips = new T.Group(); hips.position.y = .95; body.add(hips);
-    const shorts = mesh(new T.CylinderGeometry(.165, .19, .27, 12), mats.shorts); shorts.position.y = -.04; hips.add(shorts);
+    const hips = new T.Group(); hips.position.y = dims.hipH; body.add(hips);
     const legs = [];
     for (const s of [-1, 1]) {           // s=-1 右侧（模型面朝 +Z，右手在 -X）
-      const thigh = new T.Group(); thigh.position.set(s * .1, -.1, 0); hips.add(thigh);
-      thigh.add(cap(.078, .32, mats.skin));
-      const knee = new T.Group(); knee.position.y = -.42; thigh.add(knee);
-      knee.add(cap(.064, .3, mats.skin));
-      const sock = mesh(new T.CylinderGeometry(.068, .066, .1, 10), mats.shoe); sock.position.y = -.33; knee.add(sock);
-      const shoe = mesh(new T.BoxGeometry(.12, .085, .27), mats.shoe); shoe.position.set(0, -.41, .045); knee.add(shoe);
-      const sole = mesh(new T.BoxGeometry(.125, .025, .28), mats.dark); sole.position.set(0, -.455, .045); knee.add(sole);
+      const thigh = new T.Group(); thigh.position.set(...dims.thigh(s < 0 ? 'R' : 'L')); hips.add(thigh);
+      const knee = new T.Group(); knee.position.y = -dims.upLeg; thigh.add(knee);
+      if (!H) {
+        thigh.add(cap(.078, .32, mats.skin)); knee.add(cap(.064, .3, mats.skin));
+        const sock = mesh(new T.CylinderGeometry(.068, .066, .1, 10), mats.shoe); sock.position.y = -.33; knee.add(sock);
+        const shoe = mesh(new T.BoxGeometry(.12, .085, .27), mats.shoe); shoe.position.set(0, -.41, .045); knee.add(shoe);
+        const sole = mesh(new T.BoxGeometry(.125, .025, .28), mats.dark); sole.position.set(0, -.455, .045); knee.add(sole);
+      }
       legs.push({ thigh, knee });
     }
-    const torso = new T.Group(); torso.position.y = .06; hips.add(torso);
-    const chest = mesh(new T.CapsuleGeometry(.17, .3, 4, 12), mats.shirt); chest.position.y = .3; chest.scale.set(1.12, 1, .78); torso.add(chest);
-    const neck = mesh(new T.CylinderGeometry(.05, .06, .1, 8), mats.skin); neck.position.y = .62; torso.add(neck);
-    const head = new T.Group(); head.position.y = .76; torso.add(head);
-    head.add(mesh(new T.SphereGeometry(.125, 16, 12), mats.skin));
-    const hair = mesh(new T.SphereGeometry(.133, 16, 10, 0, Math.PI * 2, 0, Math.PI * .52), mats.hair); hair.rotation.x = -.25; hair.position.set(0, .012, -.012); head.add(hair);
-    if (look.long) { const tail = cap(.05, .16, mats.hair); tail.position.set(0, .06, -.13); tail.rotation.x = .5; head.add(tail) }
-    if (look.band) { const band = mesh(new T.TorusGeometry(.128, .018, 6, 20), mats.band); band.rotation.x = Math.PI / 2 - .25; band.position.y = .03; head.add(band) }
-    for (const s of [-1, 1]) { const eye = mesh(new T.SphereGeometry(.016, 6, 6), mats.dark, false); eye.position.set(s * .045, .0, .114); head.add(eye) }
-    const nose = mesh(new T.SphereGeometry(.018, 6, 6), mats.skin, false); nose.position.set(0, -.03, .125); head.add(nose);
+    const torso = new T.Group(); torso.position.set(...dims.torso); hips.add(torso);
+    const head = new T.Group(); head.position.set(...dims.head); torso.add(head);
+    if (!H) {
+      const shorts = mesh(new T.CylinderGeometry(.165, .19, .27, 12), mats.shorts); shorts.position.y = -.04; hips.add(shorts);
+      const chest = mesh(new T.CapsuleGeometry(.17, .3, 4, 12), mats.shirt); chest.position.y = .3; chest.scale.set(1.12, 1, .78); torso.add(chest);
+      const neck = mesh(new T.CylinderGeometry(.05, .06, .1, 8), mats.skin); neck.position.y = .62; torso.add(neck);
+      head.add(mesh(new T.SphereGeometry(.125, 16, 12), mats.skin));
+      const hair = mesh(new T.SphereGeometry(.133, 16, 10, 0, Math.PI * 2, 0, Math.PI * .52), mats.hair); hair.rotation.x = -.25; hair.position.set(0, .012, -.012); head.add(hair);
+      for (const s of [-1, 1]) { const eye = mesh(new T.SphereGeometry(.016, 6, 6), mats.dark, false); eye.position.set(s * .045, .0, .114); head.add(eye) }
+    }
+    // 发带 / 马尾（挂在代理头部，跟头一起动）
+    const eyeY = H ? H.eyeL[1] - J('head')[1] : 0, eyeZ = H ? H.eyeL[2] - J('head')[2] : .114;
+    if (look.long) { const tail = cap(.045, .17, mats.hair); tail.position.set(0, H ? eyeY + .03 : .06, H ? eyeZ - .17 : -.13); tail.rotation.x = .5; head.add(tail) }
+    if (look.band) {          // 发带：按头围做成椭圆，环绕额头与后脑
+      const band = mesh(new T.TorusGeometry(.1, .012, 6, 28), mats.band); band.rotation.x = Math.PI / 2 - .2;
+      if (H && H.band) { const hj = J('head'); band.rotation.x = Math.PI / 2 - .12; band.scale.set(H.band.rx * 10.4, H.band.rz * 10.4, 1); band.position.set(0, H.band.y - hj[1], H.band.cz - hj[2]) } else { band.scale.set(1.28, 1.28, 1); band.position.y = .03 }
+      head.add(band);
+    }
     const arms = {};
     for (const s of [-1, 1]) {
-      const sh = new T.Group(); sh.position.set(s * .24, .5, 0); torso.add(sh);
-      const sleeve = mesh(new T.SphereGeometry(.075, 10, 8), mats.shirt); sleeve.scale.set(1, 1.15, 1); sleeve.position.y = -.04; sh.add(sleeve);
-      sh.add(cap(.05, .22, mats.skin));
-      const el = new T.Group(); el.position.y = -.3; sh.add(el);
-      el.add(cap(.045, .2, mats.skin));
-      const wristband = mesh(new T.CylinderGeometry(.052, .052, .05, 10), mats.band); wristband.position.y = -.22; el.add(wristband);
-      const hand = mesh(new T.SphereGeometry(.055, 10, 8), mats.skin); hand.position.y = -.3; el.add(hand);
+      const sh = new T.Group(); sh.position.set(...dims.sh(s < 0 ? 'R' : 'L')); torso.add(sh);
+      const el = new T.Group(); el.position.y = -dims.upArm; sh.add(el);
+      if (!H) {
+        const sleeve = mesh(new T.SphereGeometry(.075, 10, 8), mats.shirt); sleeve.scale.set(1, 1.15, 1); sleeve.position.y = -.04; sh.add(sleeve);
+        sh.add(cap(.05, .22, mats.skin)); el.add(cap(.045, .2, mats.skin));
+        const hand = mesh(new T.SphereGeometry(.055, 10, 8), mats.skin); hand.position.y = -.3; el.add(hand);
+      }
+      const wristband = mesh(new T.CylinderGeometry(H ? .036 : .052, H ? .036 : .052, .05, 10), mats.band); wristband.position.y = -dims.foreArm + .05; el.add(wristband);
       arms[s < 0 ? 'r' : 'l'] = { sh, el };
     }
-    // 球拍挂在右手
-    const racket = new T.Group(); racket.position.y = -.3; arms.r.el.add(racket);
+    // 球拍握在右手掌心
+    const racket = new T.Group(); racket.position.y = -dims.foreArm; arms.r.el.add(racket);
     const grip = mesh(new T.CylinderGeometry(.017, .02, .2, 8), mats.dark); grip.position.y = -.08; racket.add(grip);
     const throat = mesh(new T.CylinderGeometry(.012, .012, .12, 6), mats.racket); throat.position.y = -.22; racket.add(throat);
     const frame = mesh(new T.TorusGeometry(.125, .013, 6, 24), mats.frame); frame.scale.set(.82, 1.1, 1); frame.position.y = -.41; racket.add(frame);
     const strings = mesh(new T.CircleGeometry(.12, 20), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .32, side: T.DoubleSide, depthWrite: false }), false);
     strings.userData.cast = false; strings.scale.set(.82, 1.1, 1); strings.position.y = -.41; racket.add(strings);
+    if (H) root.add(H.sm);
     root.traverse(o => { if (o.isMesh) o.castShadow = hq });
-    return { root, body, hips, torso, head, legs, arms, racket, mats, look,
+    const m = { root, body, hips, torso, head, legs, arms, racket, mats, look, human: H, hipH: dims.hipH,
+      proxy: { body, hips, torso, head, shR: arms.r.sh, elR: arms.r.el, racket, shL: arms.l.sh, elL: arms.l.el, thR: legs[0].thigh, knR: legs[0].knee, thL: legs[1].thigh, knL: legs[1].knee },
       a: { sw: null, emote: null, phase: Math.random() * 6, spd: 0, px: 0, py: 0, pose: Object.assign({}, POSES.READY) } };
-  }
-  function setLook(m, look) {
-    m.look = look;
-    m.mats.shirt.color.set(look.shirt); m.mats.shorts.color.set(look.shorts); m.mats.skin.color.set(look.skin);
-    m.mats.hair.color.set(look.hair || '#222'); m.mats.band.color.set(look.band || look.shirt);
+    return m;
   }
   // 长发/发带等结构差异需要重建模型
   function rebuild(key, look, bh) {
@@ -208,40 +311,40 @@ const Scene3D = (() => {
   // 挥拍时间轴：[秒, 姿态]，0 = 击球前 0.07 秒（拍头下沉完成），0.07 = 触球
   // 由 tools/solve-arms.js 逆向运动学求出的手臂角度（拍头位置与朝向精确到几厘米），覆盖上面的手臂初值
   const ARM = {
-    READY: {rShX:0.13,rShY:0.08,rShZ:0.31,rEl:-1.42,wrist:-0.92,wristZ:0.32,lShX:-0.27,lShY:0.43,lShZ:-0.95,lEl:-0.69},
-    FH_PREP: {rShX:-0.87,rShY:-0.29,rShZ:0.03,rEl:-1.77,wrist:-0.41,wristZ:-0.41},
-    FH_DROP: {rShX:-0.79,rShY:-0.04,rShZ:-0.68,rEl:-0.34,wrist:0.83,wristZ:-0.11},
-    FH_HIT: {rShX:-2.17,rShY:-1.44,rShZ:-1.55,rEl:-0.99,wrist:-0.38,wristZ:0.21},
-    FH_WIPER: {rShX:0.9,rShY:-1.06,rShZ:-0.08,rEl:-1.89,wrist:-1.39,wristZ:-0.53},
-    FH_FOLLOW: {rShX:-1.38,rShY:0.88,rShZ:0.47,rEl:-1.78,wrist:0.25,wristZ:0.51,lShX:-0.91,lShY:0.03,lShZ:0.57,lEl:-2.34},
-    FH_FLAT_FOL: {rShX:0.11,rShY:0.44,rShZ:-1.52,rEl:-2.07,wrist:-0.2,wristZ:-0.1},
-    FH_SL_PREP: {rShX:-0.83,rShY:-0.3,rShZ:0.09,rEl:-2.14,wrist:-0.3,wristZ:-0.39},
-    FH_SL_HIT: {rShX:0.28,rShY:0.13,rShZ:-0.92,rEl:-1.46,wrist:1.06,wristZ:-0.64},
-    FH_SL_FOL: {rShX:-0.53,rShY:-0.15,rShZ:-0.59,rEl:-0.3,wrist:-0.78,wristZ:0.19},
-    FH_LOB_FOL: {rShX:-2.23,rShY:-0.43,rShZ:-0.31,rEl:-1.87,wrist:1.13,wristZ:0.22},
-    FH_DR_HIT: {rShX:-0.23,rShY:-0.45,rShZ:-0.06,rEl:-1.21,wrist:-0.07,wristZ:-0.24},
-    FH_DR_FOL: {rShX:-2.32,rShY:-1.2,rShZ:-1.61,rEl:0,wrist:-0.07,wristZ:0.93},
-    B2_PREP: {rShX:-2.6,rShY:0.72,rShZ:1.24,rEl:-0.08,wrist:-0.76,wristZ:-0.26,lShX:-0.83,lShY:-0.01,lShZ:0.18,lEl:-1.61,hipY:0.63,torsoY:0.84},
-    B2_DROP: {rShX:-0.07,rShY:-0.74,rShZ:1.13,rEl:-0.26,wrist:0.21,wristZ:-0.26,lShX:-0.72,lShY:-0.03,lShZ:-0.14,lEl:-0.66,hipY:0.9,torsoY:0.92},
-    B2_HIT: {rShX:-0.6,rShY:1.48,rShZ:-0.46,rEl:-0.89,wrist:0.38,wristZ:-0.47,lShX:-0.85,lShY:0.46,lShZ:-0.48,lEl:-0.19,hipY:0.4,torsoY:0.55},
-    B2_WIPER: {rShX:-0.5,rShY:-0.01,rShZ:1.24,rEl:-0.11,wrist:-1.67,wristZ:0.42,lShX:0.15,lShY:0.08,lShZ:0.96,lEl:-2.4,hipY:-0.05,torsoY:-0.21},
-    B2_FOL: {rShX:-0.73,rShY:0.15,rShZ:1.06,rEl:-2,wrist:-1.3,wristZ:-0.12,lShX:-1.17,lShY:-0.26,lShZ:-1.13,lEl:-1.41,hipY:-0.49,torsoY:-0.59},
-    B2_FLAT_FOL: {rShX:-0.24,rShY:-0.03,rShZ:1.3,rEl:-1.03,wrist:-1.7,wristZ:-0.24,lShX:-0.47,lShY:-0.12,lShZ:-0.53,lEl:-1.85,hipY:-0.4,torsoY:-0.46},
-    B2_LOB_FOL: {rShX:-3.2,rShY:0.15,rShZ:1.04,rEl:0,wrist:0.32,wristZ:-0.64,lShX:-2.08,lShY:-0.1,lShZ:0.34,lEl:-1.64,hipY:-0.34,torsoY:-0.25},
-    B1_PREP: {rShX:-2.7,rShY:0.9,rShZ:1.3,rEl:-0.36,wrist:-0.61,wristZ:-0.42,lShX:-1.16,lShY:0.08,lShZ:0.38,lEl:-1.35,hipY:0.65,torsoY:1.02},
-    B1_DROP: {rShX:-0.59,rShY:-0.36,rShZ:0.87,rEl:-0.18,wrist:0.31,wristZ:-0.26,lShX:-0.6,lShY:-0.83,lShZ:0.35,lEl:-0.3,hipY:0.92,torsoY:0.83},
-    B1_HIT: {rShX:-0.83,rShY:-0.2,rShZ:0.4,rEl:-0.33,wrist:-0.37,wristZ:0.12,hipY:0.46,torsoY:0.54},
-    B1_FOL: {rShX:-1.76,rShY:0.48,rShZ:-0.19,rEl:-2.4,wrist:1.23,wristZ:-0.6,hipY:-0.05,torsoY:-0.14},
-    B1_LOB_FOL: {rShX:-1.82,rShY:-0.22,rShZ:0.85,rEl:-0.64,wrist:-0.31,wristZ:-0.32,hipY:-0.05,torsoY:-0.04},
-    BS_PREP: {rShX:-1.66,rShY:0.6,rShZ:0.56,rEl:-1.26,wrist:-0.15,wristZ:-0.06,lShX:-1.73,lShY:0.06,lShZ:-0.04,lEl:-1.24,hipY:0.67,torsoY:1.05},
-    BS_HIT: {rShX:-0.79,rShY:-0.33,rShZ:0.63,rEl:-0.12,wrist:-0.37,wristZ:0.01,hipY:0.38,torsoY:0.46},
-    BS_FOL: {rShX:-0.97,rShY:0.54,rShZ:0.08,rEl:-0.19,wrist:0.88,wristZ:-1.04,hipY:0.47,torsoY:0.45},
-    BS_DR_HIT: {rShX:-0.82,rShY:-0.32,rShZ:0.45,rEl:-0.07,wrist:-0.61,wristZ:-0.19,hipY:0.48,torsoY:0.55},
-    BS_DR_FOL: {rShX:-0.81,rShY:0.03,rShZ:0.36,rEl:-0.32,wrist:-0.69,wristZ:-0.73,hipY:0.39,torsoY:0.47},
-    VO_BACK: {rShX:-2.01,rShY:-1.6,rShZ:-1.7,rEl:-2.4,wrist:-0.56,wristZ:0.8,lShX:-2.49,lShY:-0.05,lShZ:-1.3,lEl:0},
-    VO_HIT: {rShX:-0.4,rShY:-0.45,rShZ:-0.42,rEl:-1.51,wrist:-0.44,wristZ:-0.17},
-    VB_BACK: {rShX:-1.9,rShY:0.49,rShZ:1.29,rEl:-0.22,wrist:-1.34,wristZ:-0.59,lShX:-0.83,lShY:0.15,lShZ:0.45,lEl:-2,hipY:0.4,torsoY:0.41},
-    VB_HIT: {rShX:-2.32,rShY:0.62,rShZ:1.3,rEl:0,wrist:-0.25,wristZ:-1.04,hipY:0.17,torsoY:0.13},
+    READY: {rShX:0.3,rShY:0.14,rShZ:0.18,rEl:-1.64,wrist:-0.91,wristZ:0.23,lShX:-0.31,lShY:0.25,lShZ:-0.92,lEl:-0.96},
+    FH_PREP: {rShX:-1.06,rShY:-0.26,rShZ:-0.29,rEl:-1.7,wrist:-0.16,wristZ:-0.52},
+    FH_DROP: {rShX:-0.78,rShY:0.14,rShZ:-0.86,rEl:-0.03,wrist:0.6,wristZ:0.1},
+    FH_HIT: {rShX:-0.23,rShY:-0.45,rShZ:-0.71,rEl:-1.04,wrist:0.16,wristZ:-0.6},
+    FH_WIPER: {rShX:-0.53,rShY:-1.47,rShZ:-1.38,rEl:-1.58,wrist:-1.37,wristZ:-0.36},
+    FH_FOLLOW: {rShX:-0.66,rShY:1.45,rShZ:-1.53,rEl:-1.87,wrist:0.19,wristZ:-0.25,lShX:-1.16,lShY:0.06,lShZ:0.96,lEl:-2.21},
+    FH_FLAT_FOL: {rShX:-0.16,rShY:0.16,rShZ:-1.24,rEl:-2.18,wrist:-0.32,wristZ:0.24},
+    FH_SL_PREP: {rShX:-1.13,rShY:-0.41,rShZ:-0.18,rEl:-2.07,wrist:0,wristZ:-0.4},
+    FH_SL_HIT: {rShX:0.28,rShY:-0.03,rShZ:-0.98,rEl:-1.39,wrist:0.83,wristZ:-0.57},
+    FH_SL_FOL: {rShX:-0.45,rShY:0.06,rShZ:-0.74,rEl:-0.09,wrist:-0.94,wristZ:0.08},
+    FH_LOB_FOL: {rShX:-2.39,rShY:0.15,rShZ:-0.85,rEl:-1.32,wrist:0.83,wristZ:0.4},
+    FH_DR_HIT: {rShX:0.56,rShY:0.39,rShZ:-1.31,rEl:-1.35,wrist:0.84,wristZ:-0.53},
+    FH_DR_FOL: {rShX:-0.06,rShY:0.17,rShZ:-0.67,rEl:-0.9,wrist:-0.35,wristZ:-0.36},
+    B2_PREP: {rShX:-1.01,rShY:-0.17,rShZ:0.96,rEl:-0.59,wrist:0.11,wristZ:0.69,lShX:-0.97,lShY:-0.04,lShZ:0.28,lEl:-1.53,hipY:0.66,torsoY:0.9},
+    B2_DROP: {rShX:-0.97,rShY:-0.06,rShZ:0.69,rEl:-0.21,wrist:0.44,wristZ:-0.08,lShX:-0.51,lShY:0.61,lShZ:-0.36,lEl:-0.88,hipY:0.89,torsoY:0.88},
+    B2_HIT: {rShX:-1.16,rShY:0.15,rShZ:0.7,rEl:-0.07,wrist:-0.4,wristZ:-0.03,lShX:-0.64,lShY:-0.19,lShZ:0.16,lEl:-0.97,hipY:0.37,torsoY:0.25},
+    B2_WIPER: {rShX:-0.6,rShY:0.87,rShZ:0.19,rEl:-1.5,wrist:-1.02,wristZ:-0.6,lShX:-2.69,lShY:-1.6,lShZ:-1.3,lEl:-1.29,hipY:0.1,torsoY:0.1},
+    B2_FOL: {rShX:0.9,rShY:1.6,rShZ:-1.34,rEl:-2.4,wrist:-1.7,wristZ:-0.41,lShX:-1.16,lShY:-0.95,lShZ:-1.3,lEl:-2.04,hipY:-0.9,torsoY:-0.44},
+    B2_FLAT_FOL: {rShX:-0.38,rShY:0.09,rShZ:1.3,rEl:-1.18,wrist:-1.7,wristZ:-0.28,lShX:-0.58,lShY:-0.35,lShZ:-0.11,lEl:-1.98,hipY:-0.41,torsoY:-0.44},
+    B2_LOB_FOL: {rShX:-3.13,rShY:0.27,rShZ:0.87,rEl:-0.15,wrist:0.4,wristZ:-0.51,lShX:-2.22,lShY:-0.33,lShZ:0.37,lEl:-1.17,hipY:-0.12,torsoY:-0.1},
+    B1_PREP: {rShX:-0.57,rShY:-0.46,rShZ:1.29,rEl:-0.26,wrist:0.36,wristZ:0.74,lShX:-1.21,lShY:-0.07,lShZ:0.8,lEl:-1.21,hipY:0.66,torsoY:0.95},
+    B1_DROP: {rShX:-1.12,rShY:-0.03,rShZ:0.78,rEl:-0.05,wrist:0.43,wristZ:-0.12,lShX:-1,lShY:-0.01,lShZ:0.22,lEl:-0.01,hipY:0.95,torsoY:0.81},
+    B1_HIT: {rShX:-1.02,rShY:0.11,rShZ:0.45,rEl:-0.28,wrist:-0.36,wristZ:-0.02,hipY:0.39,torsoY:0.48},
+    B1_FOL: {rShX:-1.61,rShY:0.53,rShZ:-1.7,rEl:-2.22,wrist:1.39,wristZ:0.13,hipY:0,torsoY:-0.14},
+    B1_LOB_FOL: {rShX:-2.53,rShY:0.05,rShZ:0.59,rEl:-0.37,wrist:0.12,wristZ:-0.53,hipY:-0.02,torsoY:-0.04},
+    BS_PREP: {rShX:-1.4,rShY:1,rShZ:-0.48,rEl:-1.64,wrist:0.39,wristZ:-0.32,lShX:-1.35,lShY:0.97,lShZ:-1.09,lEl:-0.72,hipY:0.88,torsoY:1.17},
+    BS_HIT: {rShX:-0.62,rShY:-0.32,rShZ:0.77,rEl:-0.34,wrist:-0.25,wristZ:0.03,hipY:0.33,torsoY:0.45},
+    BS_FOL: {rShX:-0.88,rShY:-0.3,rShZ:0.3,rEl:-0.1,wrist:-0.86,wristZ:-0.83,hipY:0.38,torsoY:0.32},
+    BS_DR_HIT: {rShX:-0.36,rShY:-0.46,rShZ:0.7,rEl:-0.67,wrist:-0.35,wristZ:-0.01,hipY:0.45,torsoY:0.61},
+    BS_DR_FOL: {rShX:-0.81,rShY:-0.08,rShZ:0.48,rEl:-0.2,wrist:-0.83,wristZ:-0.59,hipY:0.35,torsoY:0.37},
+    VO_BACK: {rShX:0.13,rShY:0.01,rShZ:0.12,rEl:-2.4,wrist:-0.73,wristZ:-0.37,lShX:-0.61,lShY:-1.6,lShZ:1.53,lEl:-1.57},
+    VO_HIT: {rShX:-0.5,rShY:-0.51,rShZ:-0.65,rEl:-1.47,wrist:-0.41,wristZ:-0.13},
+    VB_BACK: {rShX:-1.33,rShY:0.5,rShZ:1.07,rEl:-0.72,wrist:-1.08,wristZ:-0.18,lShX:-1.05,lShY:0.08,lShZ:0.51,lEl:-1.82,hipY:0.48,torsoY:0.47},
+    VB_HIT: {rShX:-1.09,rShY:0.3,rShZ:0.81,rEl:-0.66,wrist:-0.77,wristZ:-0.35,hipY:0.26,torsoY:0.17},
   };
   for (const k in ARM) Object.assign(POSES[k], ARM[k]);
   const TOP = (d, h, w, f) => [[0, d], [.07, h], [.17, w], [.38, f], [.82, 'READY']];
@@ -343,7 +446,7 @@ const Scene3D = (() => {
     }
     a.yaw = (a.yaw || 0) + (yaw - (a.yaw || 0)) * Math.min(1, dt * 8);
     m.root.rotation.y = face + p.turn + a.yaw;
-    m.hips.position.y = .95 - p.crouch - low + idle + Math.abs(cw) * .04 * run + p.jump + jumpAdd;
+    m.hips.position.y = m.hipH - p.crouch - low + idle + Math.abs(cw) * .04 * run + p.jump + jumpAdd;
     m.hips.rotation.y = p.hipY;
     m.torso.rotation.set(p.torsoX + run * (walking ? .02 : .15) + low * .6, p.torsoY, 0);
     // 头部始终看着球（回合中）
@@ -362,6 +465,7 @@ const Scene3D = (() => {
     m.arms.r.sh.rotation.set(p.rShX - high + sw * .25 * armSwing, p.rShY, p.rShZ); m.arms.r.el.rotation.x = p.rEl;
     m.arms.l.sh.rotation.set(p.lShX - sw * .55 * armSwing, p.lShY, p.lShZ); m.arms.l.el.rotation.x = p.lEl;
     m.racket.rotation.set(p.wrist, 0, p.wristZ);
+    driveHuman(m);
   }
 
   // ---------- 球与特效 ----------
@@ -541,13 +645,13 @@ const Scene3D = (() => {
     for (const [x, z] of [[-.35, -.35], [.35, -.35], [-.35, .35], [.35, .35]]) g.add(mesh(new T.BoxGeometry(.07, 1.7, .07), dark)).position.set(x, .85, z);
     g.add(mesh(new T.BoxGeometry(.9, .08, .9), dark)).position.y = 1.7;
     g.add(mesh(new T.BoxGeometry(.9, .6, .08), dark)).position.set(0, 2.05, -.42);
-    const ump = makePlayer({ shirt: '#1f2f55', shorts: '#2b2b2b', skin: '#e8c4a0', hair: '#555555', band: null });
+    const ump = makePlayer({ shirt: '#1f2f55', shorts: '#2b2b2b', skin: '#e8c4a0', hair: '#555555', band: null, body: 'm_mix', h: 1.76, sock: '#1f2f55', shoe: '#1b1b1b' });
     ump.racket.visible = false;
     const pose = mk({ crouch: .45, torsoX: .05, headX: .05, rThigh: -1.45, rKnee: 1.45, lThigh: -1.45, lKnee: 1.45, rShX: -.4, rShZ: -.1, rEl: -1.2, lShX: -.4, lShZ: .1, lEl: -1.2 });
     ump.hips.position.y = .5; ump.torso.rotation.set(pose.torsoX, 0, 0);
     ump.legs.forEach(l => { l.thigh.rotation.x = pose.rThigh; l.knee.rotation.x = pose.rKnee });
     ump.arms.r.sh.rotation.set(pose.rShX, 0, pose.rShZ); ump.arms.r.el.rotation.x = pose.rEl; ump.arms.l.sh.rotation.set(pose.lShX, 0, pose.lShZ); ump.arms.l.el.rotation.x = pose.lEl;
-    ump.root.position.y = 1.74; g.add(ump.root);
+    ump.root.position.y = 1.74; g.add(ump.root); driveHuman(ump);
     g.rotation.y = Math.PI / 2;
     add(g, -(DHW + 1.6), 0, 0);
   }
@@ -865,5 +969,5 @@ const Scene3D = (() => {
     renderer.render(scene, camera);
   }
   return { init, buildArena, resize, update, render, setMode, setAim, setPlayerLook, setOpponentLook, onEvent, project, setQuality, screenToGround,
-    playIntro, endIntro, startReplay, endReplay, ceremony, endCeremony, debugPose, debugCam, get mode() { return mode }, get arena() { return arena } };
+    playIntro, endIntro, startReplay, endReplay, ceremony, endCeremony, debugPose, debugCam, get _models() { return models }, get mode() { return mode }, get arena() { return arena } };
 })();
