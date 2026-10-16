@@ -41,9 +41,8 @@ const Scene3D = (() => {
     gradMap.minFilter = gradMap.magFilter = T.NearestFilter; gradMap.needsUpdate = true;
     dotTex = canvasTex(64, 64, (g, w) => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(.4, 'rgba(255,255,255,.6)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, w, w) });
     ringTex = canvasTex(128, 128, g => { g.strokeStyle = '#fff'; g.lineWidth = 10; g.beginPath(); g.arc(64, 64, 56, 0, Math.PI * 2); g.stroke() });
-    buildBall(); buildFx();
-    models.P = makePlayer(playerLook()); models.A = makePlayer(QUICK_LOOK);
-    scene.add(models.P.root, models.A.root);
+    buildBall(); buildFx(); buildExtras();
+    rebuild('P', playerLook(), myChar().bh); rebuild('A', QUICK_OPPS[0].look);
     setQuality(quality);
   }
   function setQuality(q) {
@@ -112,46 +111,79 @@ const Scene3D = (() => {
     m.mats.shirt.color.set(look.shirt); m.mats.shorts.color.set(look.shorts); m.mats.skin.color.set(look.skin);
     m.mats.hair.color.set(look.hair || '#222'); m.mats.band.color.set(look.band || look.shirt);
   }
-  function setPlayerLook(look) { setLook(models.P, look) }
-  function setOpponentLook(look) {      // 长发/发带等结构差异需要重建模型
-    scene.remove(models.A.root); disposeTree(models.A.root);
-    models.A = makePlayer(look); scene.add(models.A.root);
+  // 长发/发带等结构差异需要重建模型
+  function rebuild(key, look, bh) {
+    const old = models[key];
+    if (old) { scene.remove(old.root); disposeTree(old.root) }
+    const m = makePlayer(look); m.bh = bh || 'two'; models[key] = m; scene.add(m.root);
+    m.aura = new T.Sprite(new T.SpriteMaterial({ map: dotTex, color: 0xffd23f, transparent: true, opacity: 0, depthWrite: false, blending: T.AdditiveBlending }));
+    m.aura.scale.set(2.6, 2.6, 1); m.aura.position.y = 1; m.root.add(m.aura);
+    if (key === 'A') m.root.visible = mode !== 'menu';
+    return m;
   }
+  function setPlayerLook(look, bh) { rebuild('P', look, bh) }
+  function setOpponentLook(look, bh) { rebuild('A', look, bh) }
 
   // ---------- 动作姿态（弧度）----------
+  // turn：整个人额外转身（胯下击球背对球网）
   const R0 = { crouch: .1, torsoX: .18, torsoY: 0, headX: -.1, rThigh: -.35, rKnee: .6, lThigh: -.35, lKnee: .6,
-    rShX: -.75, rShY: 0, rShZ: -.15, rEl: -1.0, lShX: -.7, lShY: 0, lShZ: .15, lEl: -1.1, wrist: -.2, jump: 0 };
+    rShX: -.75, rShY: 0, rShZ: -.15, rEl: -1.0, lShX: -.7, lShY: 0, lShZ: .15, lEl: -1.1, wrist: -.2, jump: 0, turn: 0 };
   const mk = o => Object.assign({}, R0, o);
   const POSES = {
     READY: R0,
     STAND: mk({ crouch: 0, torsoX: .02, headX: 0, rThigh: 0, rKnee: .05, lThigh: 0, lKnee: .05, rShX: -.35, rShZ: -.12, rEl: -.7, lShX: -.05, lShZ: .12, lEl: -.2, wrist: -.3 }),
+    // 正手 / 双手反手
     FH_BACK: mk({ crouch: .14, torsoY: -1.15, rShX: .2, rShZ: -1.0, rEl: -.7, lShX: -1.3, lShZ: .45, lEl: -.2, wrist: -.6 }),
     FH_HIT: mk({ crouch: .12, torsoY: -.05, rShX: -.65, rShZ: -1.25, rEl: -.25, lShX: -.6, lShZ: .7, lEl: -.6, wrist: -.1 }),
     FH_FOLLOW: mk({ torsoY: 1.0, rShX: -2.3, rShZ: -.3, rEl: -1.5, lShX: -.3, lShZ: .35, lEl: -1.3, wrist: .2 }),
     BH_BACK: mk({ crouch: .14, torsoY: 1.15, rShX: -.45, rShZ: .75, rEl: -.7, lShX: -.5, lShZ: .9, lEl: -.9, wrist: -.6 }),
     BH_HIT: mk({ crouch: .12, torsoY: .1, rShX: -.9, rShZ: .55, rEl: -.3, lShX: -.9, lShZ: 1.0, lEl: -.4, wrist: -.1 }),
     BH_FOLLOW: mk({ torsoY: -.9, rShX: -2.2, rShZ: .25, rEl: -1.2, lShX: -2.1, lShZ: .5, lEl: -1.3, wrist: .2 }),
+    // 单手反手：左手向后打开保持平衡
+    B1_BACK: mk({ crouch: .14, torsoY: 1.35, rShX: -.3, rShZ: .95, rEl: -.5, lShX: -.5, lShZ: .75, lEl: -1.0, wrist: -.6 }),
+    B1_HIT: mk({ crouch: .12, torsoY: .25, rShX: -.95, rShZ: .35, rEl: -.05, lShX: .4, lShZ: 1.2, lEl: -.1, wrist: -.1 }),
+    B1_FOLLOW: mk({ torsoY: -.35, rShX: -1.7, rShZ: -1.1, rEl: -.1, lShX: .6, lShZ: 1.3, lEl: -.1, wrist: .2 }),
+    // 大跨步救球（被调动时）
+    LF_BACK: mk({ crouch: .34, torsoX: .45, torsoY: -1.0, rThigh: -1.05, rKnee: 1.25, lThigh: .6, lKnee: .35, rShX: .1, rShZ: -1.3, rEl: -.4, lShX: -.9, lShZ: .9, lEl: -.2, wrist: -.5 }),
+    LF_HIT: mk({ crouch: .36, torsoX: .5, torsoY: -.2, rThigh: -1.05, rKnee: 1.25, lThigh: .6, lKnee: .35, rShX: -.55, rShZ: -1.5, rEl: -.05, lShX: -.5, lShZ: 1.1, lEl: -.2, wrist: 0 }),
+    LF_FOLLOW: mk({ crouch: .3, torsoX: .45, torsoY: .5, rThigh: -1.0, rKnee: 1.2, lThigh: .55, lKnee: .4, rShX: -1.8, rShZ: -.6, rEl: -1.1, lShX: -.3, lShZ: .9, lEl: -.4, wrist: .2 }),
+    LB_BACK: mk({ crouch: .34, torsoX: .45, torsoY: 1.0, lThigh: -1.05, lKnee: 1.25, rThigh: .6, rKnee: .35, rShX: -.4, rShZ: .9, rEl: -.6, lShX: -.5, lShZ: 1.0, lEl: -.8, wrist: -.5 }),
+    LB_HIT: mk({ crouch: .36, torsoX: .5, torsoY: .2, lThigh: -1.05, lKnee: 1.25, rThigh: .6, rKnee: .35, rShX: -.8, rShZ: .8, rEl: -.1, lShX: .2, lShZ: 1.3, lEl: -.2, wrist: 0 }),
+    LB_FOLLOW: mk({ crouch: .3, torsoX: .45, torsoY: -.5, lThigh: -1.0, lKnee: 1.2, rThigh: .55, rKnee: .4, rShX: -1.9, rShZ: .2, rEl: -.8, lShX: .3, lShZ: 1.2, lEl: -.2, wrist: .2 }),
+    // 扣杀 / 发球
     SM_BACK: mk({ crouch: .05, torsoY: -.7, torsoX: -.15, headX: -.5, rShX: -2.4, rShZ: -.5, rEl: -1.9, lShX: -2.9, lShZ: .15, lEl: -.1, wrist: .3 }),
     SM_HIT: mk({ crouch: 0, torsoY: -.1, torsoX: .15, headX: -.4, rShX: -3.0, rShZ: -.25, rEl: -.1, lShX: -1.0, lShZ: .4, lEl: -.5, wrist: 0, jump: .08 }),
     SM_FOLLOW: mk({ torsoY: .7, torsoX: .45, headX: .1, rShX: -.5, rShZ: .5, rEl: -.4, lShX: -.4, lShZ: .3, lEl: -.6, wrist: -.3 }),
     SERVE_STANCE: mk({ crouch: .02, torsoX: .05, torsoY: -.5, headX: 0, rShX: -.3, rShZ: -.3, rEl: -.5, lShX: -.6, lShZ: .1, lEl: -.3, wrist: -.4 }),
     SERVE_TOSS: mk({ crouch: .18, torsoX: -.1, torsoY: -.9, headX: -.6, rShX: .4, rShZ: -.9, rEl: -1.3, lShX: -3.0, lShZ: .2, lEl: 0, wrist: -.3, rKnee: 1.0, lKnee: 1.0, rThigh: -.45, lThigh: -.45 }),
+    // 截击
     VO_BACK: mk({ torsoY: -.5, rShX: -.7, rShZ: -.9, rEl: -.8, wrist: -.4 }),
     VO_HIT: mk({ torsoY: 0, rShX: -1.2, rShZ: -.9, rEl: -.4, wrist: -.2 }),
     VB_BACK: mk({ torsoY: .5, rShX: -.9, rShZ: .4, rEl: -.9, wrist: -.4 }),
     VB_HIT: mk({ torsoY: 0, rShX: -1.3, rShZ: .3, rEl: -.4, wrist: -.2 }),
+    // 胯下击球：背对球网，球拍从两腿间挥出
+    TW_BACK: mk({ turn: Math.PI, crouch: .28, torsoX: .75, headX: .3, rThigh: -.25, rKnee: .5, lThigh: .25, lKnee: .4, rShX: -.6, rShZ: -.05, rEl: -.3, lShX: -.4, lShZ: .5, lEl: -.3, wrist: .4 }),
+    TW_HIT: mk({ turn: Math.PI, crouch: .3, torsoX: .8, headX: .4, rThigh: -.25, rKnee: .5, lThigh: .25, lKnee: .4, rShX: .9, rShZ: 0, rEl: -.1, lShX: -.6, lShZ: .6, lEl: -.3, wrist: .6 }),
+    TW_FOLLOW: mk({ turn: Math.PI, crouch: .22, torsoX: .55, headX: .2, rShX: 1.5, rShZ: .1, rEl: -.1, lShX: -.9, lShZ: .5, lEl: -.3, wrist: .6 }),
+    // 庆祝 / 沮丧 / 发动必杀技
     CELEB: mk({ crouch: 0, torsoX: -.1, headX: -.3, rThigh: 0, rKnee: .1, lThigh: 0, lKnee: .1, rShX: -3.0, rShZ: -.35, rEl: -.2, lShX: -3.0, lShZ: .35, lEl: -.2, wrist: 0 }),
     FIST: mk({ crouch: .05, torsoX: .1, headX: -.1, rShX: -1.2, rShZ: -.2, rEl: -2.0, lShX: -.9, lShZ: .25, lEl: -2.2 }),
+    RACKET_UP: mk({ crouch: 0, torsoX: -.05, headX: -.35, rThigh: 0, rKnee: .1, lThigh: 0, lKnee: .1, rShX: -3.0, rShZ: -.2, rEl: 0, lShX: -.9, lShZ: .5, lEl: -2.0, wrist: 0 }),
+    ROAR: mk({ crouch: .2, torsoX: -.25, headX: -.45, rShX: -.9, rShZ: -.5, rEl: -2.1, lShX: -.9, lShZ: .5, lEl: -2.1 }),
+    KNEEL: mk({ crouch: .5, torsoX: -.15, headX: -.55, rThigh: .05, rKnee: 1.57, lThigh: .05, lKnee: 1.57, rShX: -3.0, rShZ: -.4, rEl: -.2, lShX: -3.0, lShZ: .4, lEl: -.2, wrist: 0 }),
+    TROPHY: mk({ crouch: 0, torsoX: -.1, headX: -.4, rThigh: 0, rKnee: .1, lThigh: 0, lKnee: .1, rShX: -3.05, rShZ: .28, rEl: -.25, lShX: -3.05, lShZ: -.28, lEl: -.25, wrist: 0 }),
     SAD: mk({ crouch: .04, torsoX: .45, headX: .5, rThigh: 0, rKnee: .15, lThigh: 0, lKnee: .15, rShX: -.05, rShZ: -.1, rEl: -.2, lShX: .05, lShZ: .1, lEl: -.1, wrist: -.2 }),
+    POWER: mk({ crouch: .22, torsoX: .3, headX: -.2, rShX: -1.1, rShZ: -.4, rEl: -1.7, lShX: -1.1, lShZ: .4, lEl: -1.7, wrist: .3 }),
   };
+  const SW = (b, h, f, t1 = .08, t2 = .32, t3 = .75) => [[0, b], [t1, h], [t2, f], [t3, 'READY']];
   const SWINGS = {
-    fh: [[0, 'FH_BACK'], [.08, 'FH_HIT'], [.32, 'FH_FOLLOW'], [.75, 'READY']],
-    bh: [[0, 'BH_BACK'], [.08, 'BH_HIT'], [.32, 'BH_FOLLOW'], [.75, 'READY']],
-    sm: [[0, 'SM_BACK'], [.1, 'SM_HIT'], [.36, 'SM_FOLLOW'], [.8, 'READY']],
-    vo: [[0, 'VO_BACK'], [.07, 'VO_HIT'], [.3, 'VO_HIT'], [.6, 'READY']],
-    vb: [[0, 'VB_BACK'], [.07, 'VB_HIT'], [.3, 'VB_HIT'], [.6, 'READY']],
+    fh: SW('FH_BACK', 'FH_HIT', 'FH_FOLLOW'), bh: SW('BH_BACK', 'BH_HIT', 'BH_FOLLOW'), b1: SW('B1_BACK', 'B1_HIT', 'B1_FOLLOW'),
+    lf: SW('LF_BACK', 'LF_HIT', 'LF_FOLLOW', .08, .34, .9), lb: SW('LB_BACK', 'LB_HIT', 'LB_FOLLOW', .08, .34, .9),
+    sm: SW('SM_BACK', 'SM_HIT', 'SM_FOLLOW', .1, .36, .8), sj: SW('SM_BACK', 'SM_HIT', 'SM_FOLLOW', .12, .45, .95),
+    vo: SW('VO_BACK', 'VO_HIT', 'VO_HIT', .07, .3, .6), vb: SW('VB_BACK', 'VB_HIT', 'VB_HIT', .07, .3, .6),
+    tw: SW('TW_BACK', 'TW_HIT', 'TW_FOLLOW', .08, .35, .9),
   };
-  const BACK = { fh: 'FH_BACK', bh: 'BH_BACK', sm: 'SM_BACK', vo: 'VO_BACK', vb: 'VB_BACK' };
+  const BACK = { fh: 'FH_BACK', bh: 'BH_BACK', b1: 'B1_BACK', lf: 'LF_BACK', lb: 'LB_BACK', sm: 'SM_BACK', sj: 'SM_BACK', vo: 'VO_BACK', vb: 'VB_BACK', tw: 'TW_BACK' };
   const ease = t => t * t * (3 - 2 * t);
   function blend(out, a, b, t) { for (const k in R0) out[k] = a[k] + (b[k] - a[k]) * t; return out }
   function swingPose(kind, t, out) {
@@ -162,52 +194,57 @@ const Scene3D = (() => {
     return Object.assign(out, POSES.READY);
   }
   function swingKind(e, m) {
-    if (e.kind === 'serve' || e.kind === 'smash') return 'sm';
+    if (e.tweener) return 'tw';
+    if (e.kind === 'serve' || e.kind === 'smash') return e.jump ? 'sj' : 'sm';
     if (e.kind === 'volley') return e.fore ? 'vo' : 'vb';
-    return e.fore ? 'fh' : 'bh';
+    if (e.lunge) return e.fore ? 'lf' : 'lb';
+    return e.fore ? 'fh' : m.bh === 'one' ? 'b1' : 'bh';
   }
-  const tmpPose = Object.assign({}, R0), tmpPose2 = Object.assign({}, R0);
-  function animatePlayer(m, o, side, dt) {
-    const a = m.a, s = sideSign(side);
-    // 位置与速度
+  const tmpPose = Object.assign({}, R0);
+  // rp = true 时为回放：只按记录的位置和挥拍播放，不读实时比赛状态
+  function animatePlayer(m, o, side, dt, rp) {
+    const a = m.a;
     const nx = o.x, ny = o.y, sp = Math.hypot(nx - a.px, ny - a.py) / Math.max(dt, 1e-3);
     a.spd += (Math.min(sp, 9) - a.spd) * Math.min(1, dt * 10); a.px = nx; a.py = ny;
     m.root.position.set(nx, 0, ny);
-    m.root.rotation.y = side === 0 ? Math.PI : 0;
-    let target;
-    if (mode === 'menu') target = POSES.STAND;
+    let target, swT = 0;
+    if (mode === 'menu') target = a.emote ? POSES[a.emote.pose] : POSES.STAND;
     else if (a.emote && clock - a.emote.t < a.emote.dur) target = POSES[a.emote.pose];
     else if (a.sw) {
-      const t = clock - a.sw.t0;
-      if (t > SWINGS[a.sw.kind][SWINGS[a.sw.kind].length - 1][0]) a.sw = null;
-      target = a.sw ? swingPose(a.sw.kind, t, tmpPose) : POSES.READY;
-    } else if (phase === 'serve' && toss && toss.server === side) {
+      swT = (clock - a.sw.t0) * (a.sw.rate || 1);
+      const ks = SWINGS[a.sw.kind];
+      if (swT > ks[ks.length - 1][0]) a.sw = null;
+      target = a.sw ? swingPose(a.sw.kind, swT, tmpPose) : POSES.READY;
+    } else if (rp || mode === 'intro') target = mode === 'intro' ? POSES.STAND : POSES.READY;
+    else if (phase === 'serve' && toss && toss.server === side) {
       const t = now - toss.t0;
       target = t < 0 ? POSES.SERVE_STANCE : t < .5 ? blend(tmpPose, POSES.SERVE_STANCE, POSES.SERVE_TOSS, ease(t / .5)) : blend(tmpPose, POSES.SERVE_TOSS, POSES.SM_BACK, ease(clamp((t - .5) / .35, 0, 1)));
     } else if (phase === 'rally' && plan && plan.side === side && plan.t - now < .55) {
       const fore = side === 0 ? plan.x >= o.x : plan.x <= o.x;
-      const kind = plan.kind === 'smash' ? 'sm' : plan.kind === 'volley' ? (fore ? 'vo' : 'vb') : (fore ? 'fh' : 'bh');
+      const kind = plan.kind === 'smash' ? 'sm' : plan.kind === 'volley' ? (fore ? 'vo' : 'vb') : fore ? 'fh' : m.bh === 'one' ? 'b1' : 'bh';
       target = blend(tmpPose, POSES.READY, POSES[BACK[kind]], ease(clamp(1 - (plan.t - now) / .55, 0, 1)));
     } else target = phase === 'over' ? POSES.STAND : POSES.READY;
-    // 平滑过渡到目标姿态（挥拍时跟得更紧）
     const k = Math.min(1, dt * (a.sw ? 40 : 12));
     const p = a.pose; for (const key in R0) p[key] += (target[key] - p[key]) * k;
+    // 跳起扣杀 / 低球下蹲
+    let jumpAdd = 0, tuck = 0, low = 0;
+    if (a.sw && a.sw.jump) { const j = Math.sin(clamp(swT / .45, 0, 1) * Math.PI); jumpAdd = j * .5; tuck = j }
+    if (a.sw && a.sw.low) low = Math.sin(clamp(swT / .4, 0, 1) * Math.PI) * .22;
+    if (a.emote && a.emote.bounce) jumpAdd += Math.abs(Math.sin((clock - a.emote.t) * 6)) * .18;
     // 跑步叠加
-    const run = clamp(a.spd / 5, 0, 1) * (mode === 'menu' ? 0 : 1);
+    const run = clamp(a.spd / 5, 0, 1) * (mode === 'menu' || mode === 'ceremony' ? 0 : 1);
     a.phase += dt * (6 + a.spd * 1.6);
     const sw = Math.sin(a.phase), cw = Math.cos(a.phase);
     const idle = mode === 'menu' ? Math.sin(clock * 2) * .01 : Math.abs(Math.sin(clock * 5)) * .02 * (1 - run);
-    m.hips.position.y = .95 - p.crouch + idle + Math.abs(cw) * .04 * run + p.jump;
-    m.torso.rotation.set(p.torsoX + run * .15, p.torsoY, 0);
+    m.root.rotation.y = (side === 0 ? Math.PI : 0) + p.turn;
+    m.hips.position.y = .95 - p.crouch - low + idle + Math.abs(cw) * .04 * run + p.jump + jumpAdd;
+    m.torso.rotation.set(p.torsoX + run * .15 + low * .6, p.torsoY, 0);
     m.head.rotation.x = p.headX;
-    m.legs[0].thigh.rotation.x = p.rThigh + sw * .8 * run; m.legs[0].knee.rotation.x = p.rKnee + Math.max(0, -cw) * .9 * run;
-    m.legs[1].thigh.rotation.x = p.lThigh - sw * .8 * run; m.legs[1].knee.rotation.x = p.lKnee + Math.max(0, cw) * .9 * run;
+    m.legs[0].thigh.rotation.x = p.rThigh + sw * .8 * run - tuck * .7 - low * 1.2; m.legs[0].knee.rotation.x = p.rKnee + Math.max(0, -cw) * .9 * run + tuck * 1.2 + low * 1.6;
+    m.legs[1].thigh.rotation.x = p.lThigh - sw * .8 * run - tuck * .4 - low * 1.2; m.legs[1].knee.rotation.x = p.lKnee + Math.max(0, cw) * .9 * run + tuck * .9 + low * 1.6;
     m.arms.r.sh.rotation.set(p.rShX, p.rShY, p.rShZ); m.arms.r.el.rotation.x = p.rEl;
     m.arms.l.sh.rotation.set(p.lShX - sw * .5 * run * (a.sw ? 0 : 1), p.lShY, p.lShZ); m.arms.l.el.rotation.x = p.lEl;
     m.racket.rotation.x = p.wrist;
-    // 侧向移动时身体微倾
-    const lat = clamp((o.vxs || 0), -1, 1);
-    m.body.rotation.z = -lat * .08;
   }
 
   // ---------- 球与特效 ----------
@@ -422,55 +459,205 @@ const Scene3D = (() => {
     camera.setViewOffset(Wv, Hv, Wv / 2 - ax, Hv / 2 - ay, W, H); camera.updateProjectionMatrix();
     fit.pos.copy(cp); fit.look.copy(lk);
   }
+  // ---------- 额外道具：彩带、奖杯、跑位标记 ----------
+  let confetti = [], trophy, moveMark, punch = 0;
+  function buildExtras() {
+    const cols = [0xd7f94a, 0xffffff, 0x2f7dff, 0xff5a4f, 0xffc84a, 0xff8fbf];
+    for (let i = 0; i < 140; i++) {
+      const m = new T.Mesh(new T.PlaneGeometry(.09, .05), new T.MeshBasicMaterial({ color: cols[i % cols.length], side: T.DoubleSide }));
+      m.visible = false; scene.add(m); confetti.push({ m, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, life: 0 });
+    }
+    const gold = new T.MeshPhongMaterial({ color: 0xffc84a, emissive: 0x4a3000, shininess: 90, specular: 0xffffff });
+    const pts = [[0, 0], [.13, 0], [.13, .04], [.05, .07], [.04, .2], [.06, .24], [.16, .3], [.18, .48], [.16, .5], [0, .5]].map(p => new T.Vector2(p[0], p[1]));
+    trophy = new T.Group();
+    trophy.add(new T.Mesh(new T.LatheGeometry(pts, 24), gold));
+    for (const s of [-1, 1]) { const h = new T.Mesh(new T.TorusGeometry(.07, .015, 8, 16, Math.PI), gold); h.position.set(s * .18, .4, 0); h.rotation.z = s * -Math.PI / 2; trophy.add(h) }
+    trophy.visible = false; scene.add(trophy);
+    moveMark = new T.Mesh(new T.RingGeometry(.3, .4, 28), new T.MeshBasicMaterial({ color: 0x6fc3ff, transparent: true, opacity: .8, depthWrite: false }));
+    moveMark.rotation.x = -Math.PI / 2; moveMark.visible = false; scene.add(moveMark);
+  }
+  function confettiBurst(cx, cz, n = 140) {
+    for (let i = 0; i < Math.min(n, confetti.length); i++) {
+      const c = confetti[i];
+      c.m.position.set(cx + rnd(-3, 3), rnd(5, 9), cz + rnd(-3, 3)); c.vx = rnd(-.6, .6); c.vy = rnd(-1.6, -.8); c.vz = rnd(-.6, .6);
+      c.rx = rnd(-8, 8); c.ry = rnd(-8, 8); c.life = rnd(4, 7); c.m.visible = true;
+    }
+  }
+  function updateConfetti(dt) {
+    for (const c of confetti) {
+      if (c.life <= 0) continue;
+      c.life -= dt; if (c.life <= 0 || c.m.position.y < 0) { c.m.visible = false; c.life = 0; continue }
+      c.m.position.x += (c.vx + Math.sin(clock * 3 + c.rx) * .4) * dt; c.m.position.y += c.vy * dt; c.m.position.z += c.vz * dt;
+      c.m.rotation.x += c.rx * dt; c.m.rotation.y += c.ry * dt;
+    }
+  }
+
+  // ---------- 模式：menu / intro / game / replay / ceremony ----------
+  let introT = 0, introCb = null, rp = null, cer = null;
   function setMode(m) {
     mode = m; fitCamera();
-    models.A.root.visible = m === 'game';
-    if (m === 'menu') { models.P.a.px = models.P.root.position.x; ballMesh.visible = false; ballShadow.visible = false; timing.visible = timingFill.visible = aimMark.visible = false }
+    models.A.root.visible = m !== 'menu';
+    camera.zoom = 1; camera.updateProjectionMatrix();
+    if (m === 'menu') {
+      models.P.a.emote = null; ballMesh.visible = ballShadow.visible = false; timing.visible = timingFill.visible = aimMark.visible = false;
+      trophy.visible = false; moveMark.visible = false; trail.forEach(s => s.visible = false);
+    }
   }
+  function playIntro(cb) {
+    setMode('intro'); introT = 0; introCb = cb;
+    models.P.a.emote = { pose: 'STAND', t: clock, dur: 99 }; models.A.a.emote = { pose: 'STAND', t: clock, dur: 99 };
+  }
+  function endIntro() {
+    if (mode !== 'intro') return;
+    models.P.a.emote = models.A.a.emote = null;
+    setMode('game'); const cb = introCb; introCb = null; cb && cb();
+  }
+  // 回放：比赛中持续录制本分的画面，得分后慢动作重播
+  const rec = { frames: [], hits: [] };
+  function record() {
+    if (phase !== 'rally' && phase !== 'dead') return;
+    const f = rec.frames; if (f.length > 900) f.shift();
+    f.push([now, P.x, P.y, A.x, A.y, ball.x, ball.y, ball.z, ball.vis ? 1 : 0, ball.fire ? 1 : 0]);
+  }
+  function startReplay(cb) {
+    const f = rec.frames; if (f.length < 30) return false;
+    const end = f[f.length - 1][0], start = Math.max(f[0][0], end - 3.2);
+    rp = { t: start, end, i: 0, rate: .42, side: Math.random() < .5 ? 1 : -1, cb, hits: rec.hits.filter(h => h.t >= start - .1), hi: 0 };
+    while (rp.i < f.length - 1 && f[rp.i][0] < start) rp.i++;
+    models.P.a.sw = models.A.a.sw = null; models.P.a.emote = models.A.a.emote = null;
+    mode = 'replay'; camera.clearViewOffset(); camera.fov = W < H ? 52 : 36; camera.aspect = W / H; camera.updateProjectionMatrix();
+    timing.visible = timingFill.visible = aimMark.visible = moveMark.visible = false;
+    return true;
+  }
+  function endReplay() { if (!rp) return; const cb = rp.cb; rp = null; setMode('game'); cb && cb() }
+  function updateReplay(dt) {
+    const f = rec.frames;
+    rp.t += dt * rp.rate;
+    while (rp.i < f.length - 2 && f[rp.i + 1][0] <= rp.t) rp.i++;
+    const a = f[rp.i], b = f[Math.min(rp.i + 1, f.length - 1)], k = b[0] > a[0] ? clamp((rp.t - a[0]) / (b[0] - a[0]), 0, 1) : 0;
+    const L = i => a[i] + (b[i] - a[i]) * k;
+    while (rp.hi < rp.hits.length && rp.hits[rp.hi].t - .08 <= rp.t) {
+      const h = rp.hits[rp.hi++], m = h.side === 0 ? models.P : models.A;
+      m.a.sw = { kind: h.kind, t0: clock, rate: rp.rate, jump: h.jump, low: h.low };
+    }
+    animatePlayer(models.P, { x: L(1), y: L(2) }, 0, dt * rp.rate, true);
+    animatePlayer(models.A, { x: L(3), y: L(4) }, 1, dt * rp.rate, true);
+    const bx = L(5), by = L(6), bz = L(7);
+    ballMesh.visible = ballShadow.visible = a[8] === 1;
+    ballMesh.position.set(bx, bz + .06, by); ballShadow.position.set(bx, .01, by);
+    trailPts.push([bx, by, bz + .06]); if (trailPts.length > trail.length) trailPts.shift();
+    trail.forEach((s, i) => { const p = trailPts[trailPts.length - 1 - i]; s.visible = !!p && i > 0; if (s.visible) { s.position.set(p[0], p[2], p[1]); const q = 1 - i / trail.length; s.scale.setScalar(.2 * q); s.material.opacity = .6 * q; s.material.color.set(a[9] ? '#ff7a2a' : '#eaff6a') } });
+    // 电视转播式侧面机位，跟着球走
+    const cx = rp.side * (DHW + 5.5), cz = clamp(by * .55, -9, 9) + rp.side * 2;
+    camera.position.lerp(new T.Vector3(cx, 2.3, cz + 3), Math.min(1, dt * 3));
+    camera.lookAt(bx * .5, Math.min(1.6, bz * .5 + .6), by);
+    updateFx(dt * rp.rate); updateCrowd(dt);
+    if (rp.t >= rp.end) endReplay();
+  }
+  // 颁奖 / 赛后：镜头绕着胜者转，彩带落下
+  function ceremony(winSide, withTrophy) {
+    mode = 'ceremony'; camera.clearViewOffset(); camera.fov = 42; camera.aspect = W / H; camera.updateProjectionMatrix();
+    const m = winSide === 0 ? models.P : models.A, l = winSide === 0 ? models.A : models.P;
+    cer = { m, t: 0, trophy: withTrophy };
+    m.a.sw = l.a.sw = null;
+    m.a.emote = { pose: withTrophy ? 'TROPHY' : ['CELEB', 'RACKET_UP', 'KNEEL', 'ROAR'][Math.floor(Math.random() * 4)], t: clock, dur: 99, bounce: true };
+    l.a.emote = { pose: 'SAD', t: clock, dur: 99 };
+    m.racket.visible = !withTrophy;
+    trophy.visible = withTrophy;
+    ballMesh.visible = ballShadow.visible = false; timing.visible = timingFill.visible = aimMark.visible = moveMark.visible = false;
+    if (winSide === 0) confettiBurst(m.root.position.x, m.root.position.z);
+    cheer = 2;
+  }
+  function endCeremony() { if (cer) { cer.m.racket.visible = true; trophy.visible = false; cer = null } }
 
   // ---------- 事件 ----------
   function onEvent(type, e) {
     if (type === 'hit') {
-      const m = e.side === 0 ? models.P : models.A;
-      m.a.sw = { kind: swingKind(e, m), t0: clock - (e.kind === 'serve' || e.kind === 'smash' ? .1 : .08) };
-      const perfect = e.q === 'perfect';
-      burst(e.x, e.y, e.z, perfect ? 18 : 8, perfect ? '#e6ff5c' : '#ffffff', perfect ? 4 : 2.5, .35, perfect ? .22 : .14);
-      ring(e.x, e.y, e.z, perfect ? '#e6ff5c' : '#ffffff');
-      if (e.kind === 'smash' || (e.kmh > 150 && e.side === 0)) shake = .35;
+      const m = e.side === 0 ? models.P : models.A, kind = swingKind(e, m);
+      m.a.sw = { kind, t0: clock - (kind === 'sm' || kind === 'sj' ? .1 : .08), jump: e.jump, low: e.low };
+      rec.hits.push({ t: now, side: e.side, kind, jump: e.jump, low: e.low });
+      const perfect = e.q === 'perfect', hot = e.fire || !!e.ult;
+      burst(e.x, e.y, e.z, perfect || hot ? 18 : 8, hot ? '#ff8a2a' : perfect ? '#e6ff5c' : '#ffffff', perfect || hot ? 4 : 2.5, .35, perfect || hot ? .22 : .14);
+      ring(e.x, e.y, e.z, hot ? '#ff8a2a' : perfect ? '#e6ff5c' : '#ffffff');
+      if (e.kind === 'smash' || e.ult || (e.kmh > 150 && e.side === 0)) shake = .35;
       else if (perfect) shake = .12;
+      if (perfect && e.side === 0) punch = .18;
+      if (e.lunge && arena.id === 'clay') burst(m.root.position.x, m.root.position.z, .05, 12, arena.dust, 1.4, .7, .4, false);   // 红土滑步扬尘
     } else if (type === 'bounce') {
       mark(e.x, e.y, e.ok);
       burst(e.x, e.y, .05, arena.id === 'clay' ? 10 : 4, arena.dust, 1.1, .6, arena.id === 'clay' ? .35 : .18, false);
     } else if (type === 'point') {
       if (e.train) return;
       const win = e.w === 0 ? models.P : models.A, lose = e.w === 0 ? models.A : models.P;
-      win.a.emote = { pose: 'FIST', t: clock, dur: 1.1 }; lose.a.emote = { pose: 'SAD', t: clock, dur: 1.1 };
-      cheer = Math.max(cheer, e.w === 0 ? 1 : .45);
-    } else if (type === 'matchOver') {
-      const win = e.w === 0 ? models.P : models.A, lose = e.w === 0 ? models.A : models.P;
-      win.a.emote = { pose: 'CELEB', t: clock, dur: 99 }; lose.a.emote = { pose: 'SAD', t: clock, dur: 99 };
-      cheer = 1.6;
+      const big = e.why === 'ace' || e.rally >= 8 || e.big;
+      win.a.emote = { pose: big ? ['ROAR', 'RACKET_UP', 'FIST'][Math.floor(Math.random() * 3)] : 'FIST', t: clock, dur: 1.1, bounce: big };
+      lose.a.emote = { pose: 'SAD', t: clock, dur: 1.1 };
+      cheer = Math.max(cheer, e.w === 0 ? (big ? 1.5 : 1) : .45);
+    } else if (type === 'ult') {
+      const m = e.side === 0 ? models.P : models.A;
+      m.a.emote = { pose: 'POWER', t: clock, dur: .6 };
+      burst(m.root.position.x, m.root.position.z, 1, 24, e.side === 0 ? '#ffd23f' : '#ff5a4f', 3, .6, .3);
+      ring(m.root.position.x, m.root.position.z, 1, '#ffd23f'); cheer = Math.max(cheer, .8);
     } else if (type === 'matchStart' || type === 'pointStart') {
-      models.P.a.emote = models.A.a.emote = null;
+      models.P.a.emote = models.A.a.emote = null; rec.frames = []; rec.hits = [];
       if (type === 'matchStart') { models.P.a.px = P.x; models.P.a.py = P.y; models.A.a.px = A.x; models.A.a.py = A.y }
     } else if (type === 'game') cheer = Math.max(cheer, 1.2);
   }
   let aimTgt = null;
   function setAim(t) { aimTgt = t }
+  const ray = new T.Raycaster(), groundPlane = new T.Plane(new T.Vector3(0, 1, 0), 0), hitV = new T.Vector3();
+  function screenToGround(sx, sy) {
+    ray.setFromCamera({ x: sx / W * 2 - 1, y: -(sy / H) * 2 + 1 }, camera);
+    return ray.ray.intersectPlane(groundPlane, hitV) ? { x: hitV.x, y: hitV.z } : null;
+  }
 
   // ---------- 每帧 ----------
+  function updateAuras() {
+    const set = (m, c, o) => { m.aura.material.color.set(c); m.aura.material.opacity += (o - m.aura.material.opacity) * .2; m.aura.scale.setScalar(2.4 + Math.sin(clock * 8) * .2) };
+    const pU = U.wallT > 0 ? '#ffd23f' : U.flashT > 0 ? '#fff36b' : U.dash ? '#ff8fbf' : (U.meteor || U.volcano || U.eagle) ? '#ff7a2a' : U.phantom ? '#b18cff' : null;
+    const frozen = plan && plan.side === 1 && now < plan.made;
+    const aU = frozen ? '#7fd3ff' : AU.wallT > 0 ? '#ffd23f' : (AU.meteor || AU.eagle) ? '#ff5a4f' : null;
+    set(models.P, pU || '#ffffff', pU && mode === 'game' ? .55 : 0);
+    set(models.A, aU || '#ffffff', aU && mode === 'game' ? .6 : 0);
+  }
   function update(dt) {
     clock += dt;
+    updateConfetti(dt);
     if (mode === 'menu') {
-      const m = models.P; m.root.position.set(0, 0, HL - 4); m.root.rotation.y = 0;
-      animatePlayer(m, { x: 0, y: HL - 4 }, 0, dt); m.root.rotation.y = Math.sin(clock * .4) * .5;
+      const m = models.P; animatePlayer(m, { x: 0, y: HL - 4 }, 0, dt); m.root.rotation.y = Math.sin(clock * .4) * .5;
       const r = W < H ? 4.2 : 5.2;
       camera.position.set(Math.sin(clock * .15) * .8 + (W < H ? 0 : -1.4), 1.45, HL - 4 + r);
       camera.lookAt(W < H ? 0 : -1.4 + .9, W < H ? 1.0 : 1.05, HL - 4);
       updateCrowd(dt); updateFx(dt);
       return;
     }
+    if (mode === 'replay' && rp) { updateReplay(dt); return }
+    if (mode === 'ceremony' && cer) {
+      cer.t += dt;
+      animatePlayer(models.P, P, 0, dt); animatePlayer(models.A, A, 1, dt);
+      const m = cer.m, p = m.root.position, ang = cer.t * .3 + (m === models.P ? Math.PI : 0) + .4, r = (W < H ? 7.2 : 5.6) - Math.min(1, cer.t * .4) * 1.2;
+      camera.position.set(p.x + Math.sin(ang) * r, 1.7 + Math.min(1, cer.t * .5) * .4, p.z + Math.cos(ang) * r);
+      camera.lookAt(p.x, cer.trophy ? 1.7 : 1.2, p.z);
+      if (cer.trophy) { const h = m.torso.getWorldPosition(new T.Vector3()); trophy.position.set(h.x, h.y + .9, h.z); trophy.rotation.y += dt }
+      if (cer.m === models.P && Math.random() < dt * 1.2) burst(p.x + rnd(-2, 2), p.z + rnd(-2, 2), rnd(3, 5), 14, ['#ffd23f', '#d7f94a', '#ff8fbf'][Math.floor(Math.random() * 3)], 3, .9, .25);
+      updateCrowd(dt); updateFx(dt);
+      return;
+    }
+    if (mode === 'intro') {
+      introT += dt;
+      const k = clamp(introT / 3.2, 0, 1), e = ease(k);
+      animatePlayer(models.P, P, 0, dt); animatePlayer(models.A, A, 1, dt);
+      const ang = Math.PI * (1 - e) * .95 + .0001, r = lerp(30, Math.hypot(fit.pos.z, fit.pos.x), e);
+      camera.clearViewOffset(); camera.aspect = W / H; camera.fov = W < H ? 60 : 40; camera.updateProjectionMatrix();
+      camera.position.set(Math.sin(ang) * r * .6, lerp(20, fit.pos.y, e), Math.cos(ang) * r);
+      camera.lookAt(0, lerp(1, fit.look.y, e), lerp(0, fit.look.z, e));
+      updateCrowd(dt); updateFx(dt);
+      if (introT >= 3.2) endIntro();
+      return;
+    }
+    record();
     animatePlayer(models.P, P, 0, dt); animatePlayer(models.A, A, 1, dt);
+    updateAuras();
     // 球
     const show = ball.vis && phase !== 'over';
     ballMesh.visible = ballShadow.visible = show;
@@ -480,37 +667,40 @@ const Scene3D = (() => {
       ballShadow.position.set(ball.x, .01, ball.y);
       const sc = 1 + ball.z * .25; ballShadow.scale.set(sc, sc, 1); ballShadow.material.opacity = clamp(.4 - ball.z * .05, .12, .4);
       trailPts.push([ball.x, ball.y, ball.z + .06]); if (trailPts.length > trail.length) trailPts.shift();
+      if (ball.fire && phase === 'rally' && Math.random() < .7) burst(ball.x, ball.y, ball.z + .06, 1, Math.random() < .5 ? '#ff5a1f' : '#ffc84a', .6, .35, .22);
     } else trailPts.length = 0;
     const fast = Math.hypot(ball.vx, ball.vy) > 6 && phase === 'rally';
     trail.forEach((s, i) => {
       const p = trailPts[trailPts.length - 1 - i];
       s.visible = !!p && fast && i > 0;
-      if (s.visible) { s.position.set(p[0], p[2], p[1]); const k = 1 - i / trail.length; s.scale.setScalar(.17 * k); s.material.opacity = .55 * k }
+      if (s.visible) { s.position.set(p[0], p[2], p[1]); const k = 1 - i / trail.length; s.scale.setScalar((ball.fire ? .3 : .17) * k); s.material.opacity = .55 * k; s.material.color.set(ball.fire ? '#ff7a2a' : '#eaff6a') }
     });
     // 击球时机光圈
     let rem = null, at = null;
     if (phase === 'rally' && plan && plan.side === 0) { rem = plan.t - now; at = [plan.x, plan.y, plan.z + .06] }
     else if (phase === 'serve' && toss && toss.server === 0) { rem = TOSS_IDEAL - (now - toss.t0); at = [ball.x, ball.y, ball.z + .06] }
     if (rem !== null && rem < 1.1 && rem > -lateWin()) {
-      const far = phase === 'rally' && Math.hypot(P.x - plan.x, P.y - plan.y) > playerReach() + PS.move * Math.max(0, Math.min(rem, plan.t - plan.made - P_REACT));
+      const far = phase === 'rally' && Math.hypot(P.x - plan.x, P.y - plan.y) > playerReach(plan) + moveSpeed() * Math.max(0, Math.min(rem, plan.t - plan.made - P_REACT));
       const pw = perfectWin(), inP = Math.abs(rem) <= pw;
       const size = .32 * (1 + Math.max(0, rem) * 3.4);
       timing.visible = true; timing.position.set(at[0], at[2], at[1]); timing.scale.set(size, size, 1);
-      timing.material.color.set(far ? '#ff5b5b' : inP ? '#c8ff4d' : rem <= EARLY ? '#ffffff' : '#ffffff');
+      timing.material.color.set(far ? '#ff5b5b' : inP ? '#c8ff4d' : '#ffffff');
       timing.material.opacity = rem > EARLY ? .45 : 1;
       timingFill.visible = !!buffered || inP; timingFill.position.copy(timing.position); timingFill.scale.set(size * 1.1, size * 1.1, 1);
       timingFill.material.color.set(buffered ? '#c8ff4d' : '#ffffff'); timingFill.material.opacity = buffered ? .5 : .25;
     } else timing.visible = timingFill.visible = false;
-    // 瞄准标记
+    // 瞄准 / 跑位标记
     if (aimTgt) { aimMark.visible = true; aimMark.position.set(aimTgt.x, .02, aimTgt.y); aimMark.scale.setScalar(1 + Math.sin(clock * 10) * .06) }
     else aimMark.visible = false;
+    moveMark.visible = !!P.manual; if (P.manual) { moveMark.position.set(P.manual.x, .02, P.manual.y); moveMark.scale.setScalar(1 + Math.sin(clock * 8) * .08) }
     updateFx(dt); updateCrowd(dt);
-    // 相机跟随 + 震动
+    // 相机跟随 + 震动 + PERFECT 推镜
     camFollow.x += (clamp(P.x, -4, 4) * .28 - camFollow.x) * Math.min(1, dt * 3);
     shake = Math.max(0, shake - dt);
     const sk = shake * shake * .6;
     camera.position.set(fit.pos.x + camFollow.x + rnd(-sk, sk), fit.pos.y + rnd(-sk, sk), fit.pos.z);
     camera.lookAt(fit.look.x + camFollow.x, fit.look.y, fit.look.z);
+    if (punch > 0 || camera.zoom !== 1) { punch = Math.max(0, punch - dt); camera.zoom = 1 + Math.sin(punch / .18 * Math.PI) * .06; camera.updateProjectionMatrix() }
   }
   function updateFx(dt) {
     for (const p of sparks) {
@@ -549,5 +739,6 @@ const Scene3D = (() => {
   const pv = new T.Vector3();
   function project(x, y, z) { pv.set(x, z, y).project(camera); return { x: (pv.x + 1) / 2 * W, y: (1 - pv.y) / 2 * H, vis: pv.z < 1 } }
   function render() { renderer.render(scene, camera) }
-  return { init, buildArena, resize, update, render, setMode, setAim, setPlayerLook, setOpponentLook, onEvent, project, setQuality, get arena() { return arena } };
+  return { init, buildArena, resize, update, render, setMode, setAim, setPlayerLook, setOpponentLook, onEvent, project, setQuality, screenToGround,
+    playIntro, endIntro, startReplay, endReplay, ceremony, endCeremony, get mode() { return mode }, get arena() { return arena } };
 })();

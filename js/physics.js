@@ -53,9 +53,10 @@ function step(b, dt) {
 }
 
 // 旋转向量：上旋轴 = ẑ × 飞行方向；side>0 为侧旋
-function spinVec(kind, dx, dy, tx) {
+// extraSide：额外侧旋（弧线球）。从你这边打出去时，正值让球向右拐
+function spinVec(kind, dx, dy, tx, extraSide = 0) {
   const s = SPINS[kind], d = Math.hypot(dx, dy) || 1, hx = dx / d, hy = dy / d;
-  return { wx: -hy * s.top, wy: hx * s.top, wz: s.side * (tx >= 0 ? 1 : -1) * (dy > 0 ? 1 : -1) };
+  return { wx: -hy * s.top, wy: hx * s.top, wz: s.side * (tx >= 0 ? 1 : -1) * (dy > 0 ? 1 : -1) + extraSide * (dy < 0 ? 1 : -1) };
 }
 // 只飞到第一次落地，记录过网高度（瞄准求解用，不处理碰网）
 function flySim(b0) {
@@ -70,8 +71,8 @@ function flySim(b0) {
 }
 // 瞄准求解：给定出手点、目标落点、球速和旋转，迭代修正初速度，使球（含阻力与马格努斯力）准确落在目标点；
 // 并保证过网高度 ≥ 网高 + margin（不够则降速、抬高弧线）
-function launch(from, tx, ty, v, kind, margin) {
-  const dx = tx - from.x, dy = ty - from.y, d = Math.hypot(dx, dy) || .1, w = spinVec(kind, dx, dy, tx);
+function launch(from, tx, ty, v, kind, margin, extraSide = 0) {
+  const dx = tx - from.x, dy = ty - from.y, d = Math.hypot(dx, dy) || .1, w = spinVec(kind, dx, dy, tx, extraSide);
   const crosses = (from.y > 0) !== (ty > 0);
   let vh = v, best = null;
   for (let tries = 0; tries < 16; tries++) {

@@ -1,0 +1,7 @@
+{
+  "name": "tennis-smash-tools",
+  "private": true,
+  "description": "Build-time asset generators. Run: cd tools && npm install && npm run portraits",
+  "scripts": { "portraits": "node gen-portraits.js" },
+  "devDependencies": { "@dicebear/core": "9.2.4", "@dicebear/collection": "9.2.4" }
+}

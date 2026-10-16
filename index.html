@@ -178,6 +178,71 @@ svg{display:block}
 .tut-row{display:grid;grid-template-columns:48px 1fr;gap:12px;align-items:center;font-size:14px;line-height:1.5}
 .tut-ic{width:48px;height:48px;border-radius:14px;background:var(--panel2);display:grid;place-items:center}
 .tut-ic svg{width:28px;height:28px}
+/* ---------- 立绘 ---------- */
+.pt{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.pt.flip{transform:scaleX(-1)}
+.avatar{overflow:hidden;padding:0}
+.avatar .pt{transform:translateY(8%) scale(1.15)}
+.sbr .nm{display:flex;align-items:center;gap:4px}
+.sbr .av{width:22px;height:22px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,.12);flex:none}
+.sbr .av .pt{transform:translateY(10%) scale(1.25)}
+.fighter .pt.big{width:120px;height:120px;filter:drop-shadow(0 6px 0 rgba(0,0,0,.25))}
+.row3.four{grid-template-columns:repeat(4,1fr)}
+/* 球员卡 */
+.char{display:grid;grid-template-columns:116px 1fr;gap:12px;align-items:center;padding:12px;border-radius:20px;background:linear-gradient(120deg,color-mix(in srgb,var(--c) 55%,#13204a),#13204a 70%);box-shadow:0 5px 0 var(--edge)}
+.char.on{outline:3px solid var(--ball)}
+.char-art{width:116px;height:116px;border-radius:16px;background:radial-gradient(circle at 50% 70%,rgba(255,255,255,.25),transparent 70%)}
+.char-info{display:flex;flex-direction:column;gap:6px;min-width:0}
+.char-name{font-family:var(--display);font-style:italic;font-size:20px}.char-name small{font-family:var(--body);font-style:normal;font-size:12px;color:var(--mute);font-weight:800}
+.char .meta{display:flex;flex-wrap:wrap;gap:4px;font-size:11px;font-weight:800}
+.tag.buff{background:rgba(95,224,122,.25)}.tag.nerf{background:rgba(255,90,79,.25)}
+.ult-line{font-size:12px;line-height:1.5;color:rgba(255,255,255,.85)}.ult-line b{display:block;color:var(--gold);font-size:13px}
+.char .up{align-self:flex-start;min-height:40px}
+/* 必杀技按钮 */
+.sk small{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:900;background:#14214d;border-radius:6px;padding:0 4px}
+.sk.ult{width:72px;height:72px;overflow:visible}
+.sk.ult::before{inset:4px}
+.sk.ult .pt{position:absolute;inset:6px;width:auto;height:auto;border-radius:50%;overflow:hidden;clip-path:circle(50%)}
+.sk.ult em{position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);white-space:nowrap;font-style:normal;font-size:10px;font-weight:900;background:var(--gold);color:#2a1a00;border-radius:6px;padding:1px 5px}
+/* 入场 / 必杀 / 回放 / 结算 */
+.fx-layer{position:fixed;inset:0;z-index:8;pointer-events:none}
+.intro{pointer-events:auto;display:flex;flex-direction:column;justify-content:space-between;padding:calc(30px + env(safe-area-inset-top)) 16px calc(30px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(5,10,28,.7),transparent 30%,transparent 65%,rgba(5,10,28,.8))}
+.intro-top{text-align:center;font-family:var(--display);font-style:italic;font-size:20px;color:var(--ball);letter-spacing:1px;animation:fadeIn .6s both}
+.intro-duel{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:6px}
+.ib{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:18px;font-weight:900;animation:slideL .6s .2s both}
+.ib.right{animation-name:slideR}
+.ib .pt.big{width:min(36vw,170px);height:min(36vw,170px);border-radius:24px;background:radial-gradient(circle at 50% 75%,var(--c),transparent 70%)}
+.intro-vs{font-family:var(--display);font-style:italic;font-size:46px;color:var(--ball);text-shadow:0 5px 0 #405010;align-self:center;animation:pop .5s .5s both}
+.intro-skip{position:absolute;right:16px;bottom:calc(14px + env(safe-area-inset-bottom));font-size:12px;color:var(--mute)}
+.cutin{display:flex;align-items:center;background:rgba(0,0,0,.25)}
+.cutin .band{position:relative;width:100%;height:150px;background:linear-gradient(100deg,transparent 0 6%,#ffc84a 6% 8%,#13204a 8% 92%,#ffc84a 92% 94%,transparent 94%);display:flex;align-items:center;gap:14px;padding:0 10%;animation:band 1.1s both}
+.cutin.foe .band{flex-direction:row-reverse;background:linear-gradient(100deg,transparent 0 6%,#ff5a4f 6% 8%,#2a0e18 8% 92%,#ff5a4f 92% 94%,transparent 94%)}
+.cutin .pt.big{width:150px;height:150px;flex:none;animation:slideL .35s both}
+.cutin.foe .pt.big{animation-name:slideR}
+.cut-name{font-family:var(--display);font-style:italic;font-size:32px;color:#fff;text-shadow:0 4px 0 rgba(0,0,0,.4);line-height:1.1}
+.cut-name small{display:block;font-family:var(--body);font-style:normal;font-size:13px;color:var(--gold)}
+.replay .lb{position:absolute;left:0;right:0;height:9vh;background:#000;animation:fadeIn .3s both}.replay .top{top:0}.replay .bot{bottom:0}
+.replay{pointer-events:auto}
+.rp-tag{position:absolute;left:16px;top:calc(9vh + 10px);padding:4px 10px;border-radius:6px;background:var(--red);font-weight:900;font-style:italic;letter-spacing:2px;animation:blink 1s infinite}
+.res-hero{display:flex;justify-content:center;margin:-6px 0 -4px}.res-hero .pt.big{width:110px;height:110px}
+/* 横屏矮屏：对阵页等内容压缩，超出时可滚动 */
+.screen{overflow-y:auto}
+@media (orientation:landscape) and (max-height:520px){
+  .vs{gap:8px;flex:1 0 auto}
+  .fighter{flex-direction:row;padding:8px 12px;gap:10px;text-align:left}
+  .fighter .pt.big{width:72px;height:72px}
+  .fighter .nm{font-size:16px}
+  .vs .big,.screen > .big{min-height:54px}
+  .head{margin-bottom:6px}
+  .char{grid-template-columns:90px 1fr}.char-art{width:90px;height:90px}
+  .intro .ib .pt.big{width:120px;height:120px}
+}
+@keyframes slideL{from{transform:translateX(-60vw)}}
+@keyframes slideR{from{transform:translateX(60vw)}}
+@keyframes pop{from{transform:scale(0)}}
+@keyframes fadeIn{from{opacity:0}}
+@keyframes blink{50%{opacity:.4}}
+@keyframes band{0%{transform:scaleY(0)}12%{transform:scaleY(1)}88%{transform:scaleY(1);opacity:1}100%{transform:scaleY(0);opacity:0}}
 #err{position:fixed;left:8px;right:8px;bottom:8px;z-index:99;background:#5a1010;color:#fff;font:12px/1.4 monospace;padding:8px;border-radius:8px;white-space:pre-wrap;max-height:40vh;overflow:auto}
 @media (prefers-reduced-motion:reduce){.sk.ready{animation:none}#banner{transition:none}}
 </style>
@@ -187,8 +252,8 @@ svg{display:block}
 <canvas id="ov"></canvas>
 <div id="hud" class="hidden">
   <div class="sb">
-    <div class="sbr"><i class="srv" id="srvP"></i><span class="nm">你</span><span class="gm" id="gmP">0</span><span class="pt" id="ptP">0</span></div>
-    <div class="sbr"><i class="srv" id="srvA"></i><span class="nm" id="nmA">对手</span><span class="gm" id="gmA">0</span><span class="pt" id="ptA">0</span></div>
+    <div class="sbr"><i class="srv" id="srvP"></i><span class="nm"><span class="av" id="avP"></span>你</span><span class="gm" id="gmP">0</span><span class="pt" id="ptP">0</span></div>
+    <div class="sbr"><i class="srv" id="srvA"></i><span class="nm"><span class="av" id="avA"></span><span id="nmA">对手</span></span><span class="gm" id="gmA">0</span><span class="pt" id="ptA">0</span></div>
     <div class="sbtag" id="sbTag"></div>
   </div>
   <div class="meters"><div class="meter" id="stM"><i></i></div></div>

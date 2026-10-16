@@ -12,7 +12,7 @@
 
   onGame((t, e) => { Scene3D.onEvent(t, e); Sfx.onEvent(t, e); UI.onEvent(t, e) });
   Scene3D.buildArena(ARENAS[0]);
-  Scene3D.setPlayerLook(playerLook());
+  Scene3D.setPlayerLook(playerLook(), myChar().bh);
   UI.resizeOverlay(); UI.show('home');
   addEventListener('resize', () => { UI.resizeOverlay(); UI.layoutSafe() });
   document.addEventListener('visibilitychange', () => { if (document.hidden && M && phase !== 'over' && !paused) document.getElementById('pauseBtn').click() });
@@ -20,7 +20,7 @@
   let last = 0, acc = 0;
   function frame(t) {
     const rdt = Math.min(.05, (t - last) / 1000 || 0); last = t;
-    if (M && !paused) {
+    if (M && !paused && !UI.blocking) {
       if (hitStop > 0) hitStop -= rdt;
       else { acc += rdt; while (acc >= DT) { tick(DT); acc -= DT } }
     }

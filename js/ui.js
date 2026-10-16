@@ -28,6 +28,9 @@ const UI = (() => {
   const starHtml = t => { const n = 1 + Math.round(t * 4); return `<span class="stars" aria-label="${n} 星">${IC.star.repeat(n)}</span>` };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let screen = 'home', lastMatch = null, aim = null, touch = null, swipeTrail = [], popups = [], tutorialOpen = false;
+  let blocking = null, pendingReplay = null, lastReplayAt = -99, bigNow = null;
+  const img = (id, mood, cls = '') => `<img class="pt ${cls}" src="${portrait(id, mood)}" alt="" draggable="false">`;
+  const oppBh = o => o.style === 'serve' || o.style === 'defender' && o.t > .5 ? 'one' : 'two';
 
   function click(fn) { return e => { Sfx.init(); Sfx.ui(); fn(e) } }
   function vibrate(ms) { if (SAVE.settings.vibe) try { navigator.vibrate && navigator.vibrate(ms) } catch (e) {} }
@@ -38,7 +41,7 @@ const UI = (() => {
     $('hud').classList.toggle('hidden', name !== 'match');
     root.innerHTML = '';
     if (name !== 'match') { Scene3D.setMode('menu'); Scene3D.setAim(null); Sfx.setCrowd(0) }
-    ({ home, career, quick, gear, settings, vs, match: () => {} })[name](arg);
+    ({ home, career, quick, gear, settings, vs, chars, match: () => {} })[name](arg);
     layoutSafe();
   }
   function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild }
@@ -52,19 +55,20 @@ const UI = (() => {
     const next = nextCareer();
     const s = el(`<section class="screen" id="home">
       <div class="topbar">
-        <div class="profile"><div class="avatar" style="background:${playerLook().shirt}">你</div><div><div class="pname">你</div><div class="plv">等级 ${playerLevel()} · ${SAVE.wins} 胜 ${SAVE.losses} 负</div></div></div>
+        <div class="profile"><div class="avatar" style="background:${playerLook().shirt}">${img(myChar().id, 'n')}</div><div><div class="pname">${esc(myChar().name)} · ${myChar().title}</div><div class="plv">等级 ${playerLevel()} · ${SAVE.wins} 胜 ${SAVE.losses} 负</div></div></div>
         <div class="pills"><span class="pill"><span class="cup">${IC.cup}</span><span>${SAVE.trophies}</span></span>${coinHtml(SAVE.coins)}</div>
       </div>
       <div class="logo"><span class="l1">TENNIS</span><span class="l2">SMASH</span><span class="l3">2026</span></div>
       <div class="home-actions">
         <button class="btn primary big" id="bCareer">巡回赛<small>${next ? `${ARENAS[next.i].name} · ${ROUNDS[next.r]}` : '全部冠军已到手 · 可重赛刷金币'}</small></button>
         <div class="row2"><button class="btn blue" id="bQuick">快速比赛</button><button class="btn" id="bTrain">训练场</button></div>
-        <div class="row3"><button class="btn" id="bGear">${IC.racket}装备</button><button class="btn" id="bWard">${IC.shirt}球衣</button><button class="btn" id="bSet">${IC.cog}设置</button></div>
+        <div class="row3 four"><button class="btn" id="bChar">${IC.star}球员</button><button class="btn" id="bGear">${IC.racket}装备</button><button class="btn" id="bWard">${IC.shirt}球衣</button><button class="btn" id="bSet">${IC.cog}设置</button></div>
       </div></section>`);
     root.appendChild(s);
     $('bCareer').onclick = click(() => show('career'));
     $('bQuick').onclick = click(() => show('quick'));
-    $('bTrain').onclick = click(() => begin({ type: 'train', arenaIdx: SAVE.quick.arena, opp: { name: '陪练', t: .3, style: 'baseline', look: { shirt: '#4b5563', shorts: '#222', skin: '#efc6a6', hair: '#333', band: '#d7f94a' } }, setLen: 4 }));
+    $('bTrain').onclick = click(() => begin({ type: 'train', arenaIdx: SAVE.quick.arena, opp: COACH, setLen: 4 }));
+    $('bChar').onclick = click(() => show('chars'));
     $('bGear').onclick = click(() => show('gear', 'stats'));
     $('bWard').onclick = click(() => show('gear', 'outfit'));
     $('bSet').onclick = click(() => show('settings'));
@@ -110,7 +114,7 @@ const UI = (() => {
     if (!arenaUnlocked(q.arena)) q.arena = 0;
     if (q.len !== 3 && q.len !== 6) q.len = 3;
     seg('qa', 'arena'); seg('qd', 'diff'); seg('ql', 'len');
-    $('qGo').onclick = click(() => { const d = QUICK[q.diff]; begin({ type: 'quick', arenaIdx: q.arena, opp: { name: ['路人球友', '俱乐部高手', '职业选手'][q.diff], t: d.t, style: ['baseline', 'defender', 'aggressive'][q.diff], look: QUICK_LOOK }, setLen: q.len, diff: q.diff }) });
+    $('qGo').onclick = click(() => begin({ type: 'quick', arenaIdx: q.arena, opp: Object.assign({ t: QUICK[q.diff].t }, QUICK_OPPS[q.diff]), setLen: q.len, diff: q.diff }));
   }
 
   function gear(tab) {
@@ -135,10 +139,11 @@ const UI = (() => {
       const grid = el(`<div class="outfits"></div>`);
       OUTFITS.forEach(o => {
         const owned = SAVE.owned.includes(o.id), on = SAVE.outfit === o.id;
-        const c = el(`<button class="outfit ${on ? 'on' : ''}"><div class="sw" style="background:${o.shirt}"><i style="background:${o.shorts}"></i></div>${o.name}<span class="price">${on ? '穿着中' : owned ? '已拥有' : `<i class="coin" style="width:14px;height:14px"></i>${o.cost}`}</span></button>`);
+        const lk = o.shirt ? o : myChar().look;
+        const c = el(`<button class="outfit ${on ? 'on' : ''}"><div class="sw" style="background:${lk.shirt}"><i style="background:${lk.shorts}"></i></div>${o.name}<span class="price">${on ? '穿着中' : owned ? '已拥有' : `<i class="coin" style="width:14px;height:14px"></i>${o.cost}`}</span></button>`);
         c.onclick = click(() => {
           if (!owned) { if (SAVE.coins < o.cost) { toast('金币不够'); return } SAVE.coins -= o.cost; SAVE.owned.push(o.id); Sfx.coin() }
-          SAVE.outfit = o.id; persist(); Scene3D.setPlayerLook(playerLook()); show('gear', 'outfit');
+          SAVE.outfit = o.id; persist(); Scene3D.setPlayerLook(playerLook(), myChar().bh); show('gear', 'outfit');
         });
         grid.appendChild(c);
       });
@@ -160,8 +165,10 @@ const UI = (() => {
     const rec = el(`<div class="card" style="line-height:1.9;font-size:14px">
       <b>生涯数据</b><br>战绩 ${SAVE.wins} 胜 ${SAVE.losses} 负 · 奖杯 ${SAVE.trophies}<br>最快球速 ${SAVE.fastest} km/h · ACE ${SAVE.aces}<br>最长连击 ${SAVE.bestCombo} · 训练最长回合 ${SAVE.bestRally} 拍</div>`);
     list.appendChild(rec);
+    list.appendChild(el(`<div class="card" style="line-height:1.7;font-size:13px;color:var(--mute)"><b style="color:var(--text)">素材与鸣谢</b><br>
+      球员立绘：Avataaars，作者 Pablo Stanley（可免费商用），由 DiceBear（MIT 许可）生成<br>3D 引擎：three.js（MIT 许可）<br>音效、球场、球员模型与网球物理：本游戏原创程序生成</div>`));
     const reset = el(`<button class="btn" style="color:#ff8a80">重置全部进度</button>`);
-    reset.onclick = click(() => confirmBox('重置全部进度？', '金币、装备、球衣和巡回赛进度都会清空，不能恢复。', '重置', () => { resetSave(); applySettings(); Scene3D.setPlayerLook(playerLook()); show('home') }));
+    reset.onclick = click(() => confirmBox('重置全部进度？', '金币、装备、球衣和巡回赛进度都会清空，不能恢复。', '重置', () => { resetSave(); applySettings(); Scene3D.setPlayerLook(playerLook(), myChar().bh); show('home') }));
     list.appendChild(reset);
     s.appendChild(list); root.appendChild(s);
   }
@@ -174,9 +181,9 @@ const UI = (() => {
       <div class="vs">
         <div class="round-name">${a.name} · ${ROUNDS[cfg.round]}</div>
         <div class="duel">
-          <div class="fighter" style="background:linear-gradient(180deg,${playerLook().shirt},#0f1a40)"><div class="avatar" style="background:${playerLook().shirt}">你</div><div class="nm">你</div><div class="st">等级 ${playerLevel()}</div><div class="st">一发 ${Math.round(playerStats().srv * 3.6)} km/h</div></div>
+          <div class="fighter" style="background:linear-gradient(180deg,${playerLook().shirt},#0f1a40)">${img(myChar().id, 'n', 'big')}<div class="nm">${esc(myChar().name)}</div><div class="st">等级 ${playerLevel()} · ${myChar().title}</div><div class="st">必杀：${myChar().ult.name}</div></div>
           <div class="vsx">VS</div>
-          <div class="fighter" style="background:linear-gradient(180deg,${opp.look.shirt},#0f1a40)"><div class="avatar" style="background:${opp.look.shirt};color:${opp.look.shorts}">${esc(opp.name[0])}</div><div class="nm">${esc(opp.name)}</div>${starHtml(opp.t)}<div class="st">${STYLE_NAME[opp.style]}</div></div>
+          <div class="fighter" style="background:linear-gradient(180deg,${opp.look.shirt},#0f1a40)">${img(opp.id, 'f', 'big flip')}<div class="nm">${esc(opp.name)}</div>${starHtml(opp.t)}<div class="st">${STYLE_NAME[opp.style]}${opp.t >= .45 ? ' · 会放必杀' : ''}</div></div>
         </div>
         <p style="text-align:center;color:var(--mute);font-size:13px;margin:0">${a.surfName}：${{ city: '弹跳正常，速度中等', clay: '球速慢、弹得高，回合更长', grass: '球速快、弹得低，发球占优', night: '总决赛舞台，对手都是顶尖选手' }[a.id]}</p>
         <p style="text-align:center;font-size:14px;margin:0">胜利奖励 <i class="coin" style="width:14px;height:14px;vertical-align:-2px"></i> <b>${careerReward(cfg, true)}</b>${cfg.round === 2 && !cfg.replay ? ` + 冠军奖金 <b>${a.prize}</b>` : ''}</p>
@@ -193,24 +200,28 @@ const UI = (() => {
     lastMatch = cfg;
     Sfx.init();
     Scene3D.buildArena(ARENAS[cfg.arenaIdx]);
-    Scene3D.setOpponentLook(cfg.opp.look);
-    Scene3D.setPlayerLook(playerLook());
+    Scene3D.setOpponentLook(cfg.opp.look, oppBh(cfg.opp));
+    Scene3D.setPlayerLook(playerLook(), myChar().bh);
     show('match');
     Scene3D.setMode('game');
     buildHud(cfg);
     startMatch(cfg);
-    if (!SAVE.tutorial) tutorial();
+    pendingReplay = null; lastReplayAt = -99; bigNow = null;
+    if (cfg.type === 'train') { if (!SAVE.tutorial) tutorial(); return }
+    intro(cfg);
   }
   function buildHud(cfg) {
     $('nmA').textContent = cfg.opp.name;
+    $('avP').innerHTML = img(myChar().id, 'n'); $('avA').innerHTML = img(cfg.opp.id, 'n');
     $('sbTag').textContent = cfg.type === 'train' ? '训练场 · 连续回球' : cfg.type === 'career' ? `${ARENAS[cfg.arenaIdx].short} · ${ROUNDS[cfg.round]}` : `快速比赛 · ${QUICK[cfg.diff].name}`;
     $('pauseBtn').innerHTML = IC.pause; $('pauseBtn').onclick = click(pauseMenu);
     const shots = [['topspin', '上旋', IC.top], ['flat', '平击', IC.flat], ['slice', '切削', IC.slice], ['lob', '高吊', IC.lob], ['drop', '放小球', IC.drop]];
     $('shots').innerHTML = shots.map(([k, n, i]) => `<button class="chip" data-s="${k}">${i}${n}</button>`).join('') + `<button class="chip net" data-net>${IC.net}上网</button>`;
     $('shots').querySelectorAll('[data-s]').forEach(b => b.onclick = click(() => { shot = b.dataset.s; hud() }));
     $('shots').querySelector('[data-net]').onclick = click(() => { netMode = !netMode; say(netMode ? '上网：下一拍后冲到网前截击' : '回到底线'); hud() });
-    $('skills').innerHTML = [['fire', '爆发'], ['slow', '减速'], ['zone', 'Zone']].map(([k, n]) => `<button class="sk" data-k="${k}"><span><b>${{ fire: '🔥', slow: '❄️', zone: '🎯' }[k]}</b>${n}</span></button>`).join('');
-    $('skills').querySelectorAll('[data-k]').forEach(b => b.onclick = click(() => { if (!skill(b.dataset.k)) toast('能量不足：击球攒能量') }));
+    $('skills').innerHTML = `<button class="sk ult" data-k="ult" aria-label="必杀技 ${myChar().ult.name}">${img(myChar().id, 'f')}<em>${myChar().ult.name}</em></button>` +
+      [['fire', '爆发', '🔥'], ['zone', 'Zone', '🎯']].map(([k, n, i]) => `<button class="sk" data-k="${k}"><span><b>${i}</b>${n}</span><small>${COST[k]}</small></button>`).join('');
+    $('skills').querySelectorAll('[data-k]').forEach(b => b.onclick = click(() => { if (!skill(b.dataset.k)) toast(P.ep < COST[b.dataset.k] ? `能量不足：需要 ${COST[b.dataset.k]}，击球攒能量` : '必杀技已就绪') }));
   }
   const PTS = ['0', '15', '30', '40'];
   function hud() {
@@ -229,7 +240,7 @@ const UI = (() => {
     $('srvP').classList.toggle('on', !train && sc.server === 0); $('srvA').classList.toggle('on', !train && sc.server === 1);
     $('shots').querySelectorAll('[data-s]').forEach(b => b.classList.toggle('on', b.dataset.s === shot));
     $('shots').querySelector('[data-net]').classList.toggle('on', netMode);
-    $('skills').querySelectorAll('[data-k]').forEach(b => { b.style.setProperty('--e', P.ep); b.classList.toggle('ready', P.ep >= 100) });
+    $('skills').querySelectorAll('[data-k]').forEach(b => { const c = COST[b.dataset.k]; b.style.setProperty('--e', Math.min(100, P.ep / c * 100)); b.classList.toggle('ready', P.ep >= c) });
   }
   let sayT = 0;
   function sayText(t) { const s = $('say'); s.textContent = t; s.style.opacity = 1; sayT = 2.6 }
@@ -238,7 +249,7 @@ const UI = (() => {
   function toast(t) { if (screen === 'match') sayText(t); else { const d = el(`<div class="pill" style="position:fixed;left:50%;bottom:calc(30px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:30;padding:0 16px">${esc(t)}</div>`); document.body.appendChild(d); setTimeout(() => d.remove(), 1600) } }
 
   function pauseMenu() {
-    if (!M || phase === 'over') return;
+    if (!M || phase === 'over' || blocking) return;
     paused = true;
     const m = el(`<div class="modal"><div class="box"><h2>暂停</h2>
       <button class="btn primary" id="pmGo">继续比赛</button>
@@ -251,7 +262,7 @@ const UI = (() => {
   }
   function quitMatch() {
     const train = M && M.type === 'train', coins = st ? st.coinsTrain : 0;
-    M = null; paused = false; phase = 'idle'; ball.vis = false;
+    M = null; paused = false; phase = 'idle'; ball.vis = false; blocking = null; clearOverlays();
     show('home');
     if (train && coins) toast(`训练结束 · 共获得 ${coins} 金币`);
   }
@@ -265,8 +276,9 @@ const UI = (() => {
     const m = el(`<div class="modal"><div class="box"><h2>怎么玩</h2><div class="tut">
       <div class="tut-row"><div class="tut-ic">${IC.swipe}</div><div><b>按住屏幕往上拖</b>，对面场地会出现黄色瞄准圈；左右拖改方向，拖得越远打得越深。<b>松手就是挥拍</b>。</div></div>
       <div class="tut-row"><div class="tut-ic" style="color:var(--ball)">${IC.ringI}</div><div>球飞来时有个光圈在缩小，<b>缩到球上变绿时松手 = PERFECT</b>：更快、更准。点一下也能打，回中路。</div></div>
-      <div class="tut-row"><div class="tut-ic">${IC.top}</div><div>下方选球路：上旋稳、平击快、切削低、高吊过顶、放小球骗对手上网。人物会<b>自动跑位</b>。</div></div>
-      <div class="tut-row"><div class="tut-ic" style="color:var(--gold)">${IC.bolt}</div><div>击球攒能量，满了可以放技能：爆发、让对手减速、Zone 判定放宽。</div></div>
+      <div class="tut-row"><div class="tut-ic">${IC.slice}</div><div><b>划弧线 = 侧旋弧线球</b>，球会在空中拐弯。<b>发球时拖得越长越用力</b>，但更容易失误。</div></div>
+      <div class="tut-row"><div class="tut-ic">${IC.top}</div><div>下方选球路。人物会自动跑位；球在对面时<b>点一下自己半场</b>，可以手动跑到那里。</div></div>
+      <div class="tut-row"><div class="tut-ic" style="color:var(--gold)">${IC.bolt}</div><div>击球攒能量：50 放「爆发」或「Zone」，攒满 100 放<b>球员专属必杀技</b>。</div></div>
       </div><button class="btn primary" id="tutOk">开打！</button></div></div>`);
     document.body.appendChild(m);
     $('tutOk').onclick = click(() => { m.remove(); paused = false; tutorialOpen = false; SAVE.tutorial = true; persist() });
@@ -287,9 +299,14 @@ const UI = (() => {
     const bonus = Math.min(60, st.perfect * 2 + st.aces * 5);
     coins += bonus;
     SAVE.coins += coins; persist();
+    const trophyWin = cfg.type === 'career' && cfg.round === 2 && w === 0;
+    pendingReplay = null;
+    Scene3D.ceremony(w, trophyWin); $('hud').classList.add('hidden');
+    if (trophyWin) setTimeout(() => banner('🏆 CHAMPION'), 600);
     setTimeout(() => {
       const m = el(`<div class="modal"><div class="box">
-        <div class="res-title ${w === 0 ? 'win' : 'lose'}">${w === 0 ? 'VICTORY' : 'DEFEAT'}</div>
+        <div class="res-hero">${img(w === 0 ? myChar().id : cfg.opp.id, 'w', 'big')}</div>
+        <div class="res-title ${w === 0 ? 'win' : 'lose'}">${trophyWin ? 'CHAMPION' : w === 0 ? 'VICTORY' : 'DEFEAT'}</div>
         <div class="res-score">你 ${sc.games[0]} – ${sc.games[1]} ${esc(cfg.opp.name)}${sc.tb ? `（抢七 ${sc.pts[0]}-${sc.pts[1]}）` : ''}</div>
         ${extra ? `<p style="color:var(--ball);font-weight:900">${extra}</p>` : ''}
         <div class="grid-stats">
@@ -304,14 +321,89 @@ const UI = (() => {
       let n = 0; const step = Math.max(1, Math.round(coins / 30));
       const iv = setInterval(() => { n = Math.min(coins, n + step); const e = $('rwN'); if (e) e.textContent = '+' + n; if (n >= coins) clearInterval(iv) }, 30);
       Sfx.coin();
-      $('rsBack').onclick = click(() => { m.remove(); M = null; show(cfg.type === 'career' ? 'career' : 'home') });
+      $('rsBack').onclick = click(() => { m.remove(); M = null; Scene3D.endCeremony(); show(cfg.type === 'career' ? 'career' : 'home') });
       $('rsAgain').onclick = click(() => {
-        m.remove();
+        m.remove(); Scene3D.endCeremony();
         if (cfg.type === 'career') { const done = SAVE.career[cfg.arenaIdx]; show('vs', { type: 'career', arenaIdx: cfg.arenaIdx, round: Math.min(done, 2), replay: done >= 3 }) }
         else begin(cfg);
       });
-    }, 2200);
+    }, trophyWin ? 4200 : 2600);
   }
+
+  // ---------- 球员选择 ----------
+  function chars() {
+    const s = el(`<section class="screen solid"></section>`);
+    s.appendChild(header('球员'));
+    const list = el(`<div class="scroll chars"></div>`);
+    const BIAS = { power: ['力量', 1], control: ['控制', -1], move: ['跑速', 1], reach: ['救球范围', 1], serve: ['发球', 1] };
+    CHARACTERS.forEach(c => {
+      const own = SAVE.chars.includes(c.id), on = SAVE.char === c.id;
+      const tags = Object.entries(c.bias).map(([k, v]) => { const [n, sgn] = BIAS[k], up = (k === 'move' || k === 'reach' ? v > 0 : (v - 1) * sgn > 0); return `<span class="tag ${up ? 'buff' : 'nerf'}">${n}${up ? '↑' : '↓'}</span>` }).join('');
+      const card = el(`<div class="char ${on ? 'on' : ''}" style="--c:${c.look.shirt}">
+        <div class="char-art">${img(c.id, on ? 'w' : 'n', 'big')}</div>
+        <div class="char-info"><div class="char-name">${esc(c.name)} <small>${c.title}</small></div>
+          <div class="meta"><span class="tag">${STYLE_NAME[c.style] || (c.style === 'net' ? '网前型' : '力量型')}</span><span class="tag">${c.bh === 'one' ? '单手反手' : '双手反手'}</span>${tags}</div>
+          <div class="ult-line"><b>必杀 · ${c.ult.name}</b>${c.ult.desc}</div>
+          <button class="btn ${on ? '' : own ? 'blue' : 'primary'} up">${on ? '使用中' : own ? '选用' : `<i class="coin" style="width:16px;height:16px"></i>${c.cost} 解锁`}</button></div></div>`);
+      card.querySelector('button').onclick = click(() => {
+        if (on) return;
+        if (!own) { if (SAVE.coins < c.cost) { toast('金币不够'); return } SAVE.coins -= c.cost; SAVE.chars.push(c.id); Sfx.coin() }
+        SAVE.char = c.id; SAVE.outfit = 'sig'; persist();
+        Scene3D.setPlayerLook(playerLook(), c.bh); show('chars');
+      });
+      list.appendChild(card);
+    });
+    s.appendChild(list); root.appendChild(s);
+  }
+
+  // ---------- 比赛演出 ----------
+  function clearOverlays() { document.querySelectorAll('.fx-layer').forEach(e => e.remove()) }
+  // 入场：镜头环绕球场 + 双方立绘对阵
+  function intro(cfg) {
+    const a = ARENAS[cfg.arenaIdx];
+    blocking = 'intro';
+    const o = el(`<div class="fx-layer intro">
+      <div class="intro-top">${a.name}${cfg.type === 'career' ? ' · ' + ROUNDS[cfg.round] : ''}</div>
+      <div class="intro-duel"><div class="ib left" style="--c:${playerLook().shirt}">${img(myChar().id, 'n', 'big')}<b>${esc(myChar().name)}</b></div>
+        <div class="intro-vs">VS</div>
+        <div class="ib right" style="--c:${cfg.opp.look.shirt}">${img(cfg.opp.id, 'f', 'big flip')}<b>${esc(cfg.opp.name)}</b></div></div>
+      <div class="intro-skip">点击跳过</div></div>`);
+    document.body.appendChild(o); $('hud').classList.add('hidden');
+    const done = () => { if (blocking !== 'intro') return; blocking = null; o.remove(); $('hud').classList.remove('hidden'); if (!SAVE.tutorial) tutorial() };
+    o.onclick = () => Scene3D.endIntro();
+    Scene3D.playIntro(done);
+    Sfx.applause(.7);
+  }
+  // 必杀技发动：立绘横切特写
+  function cutin(e) {
+    const mine = e.side === 0, id = mine ? myChar().id : M.opp.id;
+    const o = el(`<div class="fx-layer cutin ${mine ? '' : 'foe'}"><div class="band">${img(id, 'f', 'big' + (mine ? '' : ' flip'))}<div class="cut-name"><small>${mine ? '必杀技' : esc(M.opp.name) + ' 的必杀技'}</small>${e.name}</div></div></div>`);
+    document.body.appendChild(o);
+    blocking = 'cutin'; vibrate(40);
+    setTimeout(() => { o.remove(); if (blocking === 'cutin') blocking = null }, 1100);
+  }
+  function bigPointAlert(e) {
+    bigNow = e;
+    const t = e.kind === 'match' ? (e.w === 0 ? '赛点！' : `${M.opp.name} 的赛点`) : (e.w === 0 ? '破发点！' : '对手破发点');
+    banner(t); Sfx.tension(true);
+  }
+  // 精彩球回放：你的 ACE / 制胜分（有一定概率）、长回合、决胜分
+  function onPoint(e) {
+    if (bigNow) { bigNow = null; Sfx.tension(false) }
+    if (e.train || M.type === 'train') return;
+    const great = (e.w === 0 && (e.why === 'ace' || e.why === 'winner') && Math.random() < .55) || e.rally >= 9 || (e.decisive && e.why !== 'df');
+    if (great && now - lastReplayAt > 12) pendingReplay = { at: now + .7 };
+  }
+  function runReplay() {
+    pendingReplay = null;
+    if (!Scene3D.startReplay(endReplayUI)) return;
+    lastReplayAt = now; blocking = 'replay';
+    const o = el(`<div class="fx-layer replay"><div class="lb top"></div><div class="lb bot"></div><div class="rp-tag">REPLAY</div><div class="intro-skip">点击跳过</div></div>`);
+    o.onclick = () => Scene3D.endReplay();
+    document.body.appendChild(o);
+    $('hud').classList.add('hidden');
+  }
+  function endReplayUI() { clearOverlays(); if (blocking === 'replay') blocking = null; if (screen === 'match') $('hud').classList.remove('hidden') }
 
   // ---------- 游戏事件 ----------
   function onEvent(type, e) {
@@ -321,7 +413,10 @@ const UI = (() => {
     else if (type === 'hud') hud();
     else if (type === 'hit' && e.side === 0) vibrate(e.q === 'perfect' ? 30 : 12);
     else if (type === 'matchOver') matchOver(e.w);
-    else if (type === 'matchStart' || type === 'point' || type === 'game') hud();
+    else if (type === 'ult') cutin(e);
+    else if (type === 'bigpoint') bigPointAlert(e);
+    else if (type === 'point') { hud(); onPoint(e) }
+    else if (type === 'matchStart' || type === 'game') hud();
   }
 
   // ---------- 输入：按住拖动瞄准，松手出手 ----------
@@ -329,24 +424,38 @@ const UI = (() => {
     const s = Math.min(innerWidth, innerHeight);
     return { x: clamp(dx / (s * .32), -1, 1), d: clamp(-dy / (s * .45), 0, 1), tap: false };
   }
+  // 滑动弧度：轨迹偏离起点-终点连线的最大距离 / 连线长度。向左鼓出 → 球向右拐
+  function curveOf(path) {
+    if (path.length < 4) return 0;
+    const [sx, sy] = path[0], [ex, ey] = path[path.length - 1], cx = ex - sx, cy = ey - sy, len = Math.hypot(cx, cy);
+    if (len < 40) return 0;
+    let dev = 0;
+    for (const [px, py] of path) { const c = (cx * (py - sy) - cy * (px - sx)) / len; if (Math.abs(c) > Math.abs(dev)) dev = c }
+    return clamp(dev / len * 3.5, -1, 1);
+  }
   function canAim() { return screen === 'match' && M && !paused && (phase === 'rally' || phase === 'serve' || phase === 'dead') }
   ov.addEventListener('pointerdown', e => {
     e.preventDefault(); Sfx.init();
     if (!canAim()) return;
-    touch = { x: e.clientX, y: e.clientY, id: e.pointerId };
-    aim = { x: 0, d: .6, tap: true }; swipeTrail = [[e.clientX, e.clientY, performance.now()]];
+    if (blocking) return;
+    touch = { x: e.clientX, y: e.clientY, id: e.pointerId, path: [[e.clientX, e.clientY]] };
+    aim = { x: 0, d: .6, tap: true, curve: 0 }; swipeTrail = [[e.clientX, e.clientY, performance.now()]];
   });
   ov.addEventListener('pointermove', e => {
     if (!touch || e.pointerId !== touch.id) return;
     const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
     swipeTrail.push([e.clientX, e.clientY, performance.now()]); if (swipeTrail.length > 24) swipeTrail.shift();
-    if (Math.hypot(dx, dy) > 14) { aim = aimFromDrag(dx, dy); aim.d = Math.max(aim.d, .15) }
+    touch.path.push([e.clientX, e.clientY]);
+    if (Math.hypot(dx, dy) > 14) { aim = aimFromDrag(dx, dy); aim.d = Math.max(aim.d, .15); aim.curve = curveOf(touch.path) }
     Scene3D.setAim(aim && !aim.tap ? aimTarget(aim) : null);
   });
   function release(e) {
     if (!touch || e.pointerId !== touch.id) return;
-    touch = null; Scene3D.setAim(null);
-    if (canAim() && aim) swing(aim);
+    const t = touch; touch = null; Scene3D.setAim(null);
+    if (canAim() && aim && !blocking) {
+      const g = aim.tap && canManualMove() ? Scene3D.screenToGround(t.x, t.y) : null;   // 点自己半场 = 跑位
+      if (!(g && manualMove(g.x, g.y))) swing(aim);
+    }
     aim = null;
   }
   ov.addEventListener('pointerup', release); ov.addEventListener('pointercancel', e => { touch = null; aim = null; Scene3D.setAim(null) });
@@ -389,7 +498,23 @@ const UI = (() => {
       octx.strokeText(p.text, s.x, s.y - k * 40); octx.fillStyle = p.col; octx.fillText(p.text, s.x, s.y - k * 40);
     }
     octx.globalAlpha = 1;
-    if (screen === 'match') { const m = $('stM').firstElementChild; m.style.transform = `scaleX(${P.st / 100})` }
+    if (screen === 'match') {
+      const m = $('stM').firstElementChild; m.style.transform = `scaleX(${P.st / 100})`;
+      if (pendingReplay && !blocking && now >= pendingReplay.at && phase === 'dead') runReplay();
+      if (touch && aim && serving()) drawPower(aim.tap ? .6 : aim.d);
+      if (touch && aim && Math.abs(aim.curve) > .25 && !serving()) { octx.font = 'italic 900 16px "Arial Black",sans-serif'; octx.fillStyle = '#9fd8ff'; octx.fillText(aim.curve > 0 ? '弧线 ↷' : '↶ 弧线', touch.x, touch.y - 40) }
+    }
+  }
+  // 发球力量条：绿区稳、黄区快、红区最快但容易失误
+  function drawPower(pw) {
+    const x = innerWidth - 34, h = Math.min(220, innerHeight * .32), y = innerHeight * .5 - h / 2;
+    octx.fillStyle = 'rgba(10,19,48,.8)'; octx.fillRect(x - 6, y - 6, 24, h + 12);
+    const g = octx.createLinearGradient(0, y + h, 0, y); g.addColorStop(0, '#5fe07a'); g.addColorStop(.55, '#d7f94a'); g.addColorStop(.8, '#ffc84a'); g.addColorStop(1, '#ff5a4f');
+    octx.fillStyle = g; octx.fillRect(x, y + h * (1 - pw), 12, h * pw);
+    octx.strokeStyle = '#fff'; octx.lineWidth = 2; octx.strokeRect(x, y, 12, h);
+    octx.font = '900 12px sans-serif'; octx.fillStyle = '#fff'; octx.textAlign = 'center';
+    octx.fillText('力量', x + 6, y - 14); if (pw > .8) { octx.fillStyle = '#ff8a80'; octx.fillText('易失误', x + 6, y + h + 18); octx.fillStyle = '#fff' }
+    octx.fillText(`${Math.round(PS.srv * (.82 + .32 * pw) * 3.6)}`, x - 22, y + h * (1 - pw));
   }
   function resizeOverlay() {
     const d = Math.min(devicePixelRatio || 1, 2);
@@ -401,5 +526,5 @@ const UI = (() => {
     const s = screen === 'match' ? (port ? { top: 112, bottom: 76, left: 6, right: 6 } : { top: 40, bottom: 8, left: 200, right: 236 }) : { top: 0, bottom: 0, left: 0, right: 0 };
     Scene3D.resize(innerWidth, innerHeight, s);
   }
-  return { show, onEvent, frame, resizeOverlay, layoutSafe, applySettings, get tutorialOpen() { return tutorialOpen } };
+  return { show, onEvent, frame, resizeOverlay, layoutSafe, applySettings, get tutorialOpen() { return tutorialOpen }, get blocking() { return blocking } };
 })();

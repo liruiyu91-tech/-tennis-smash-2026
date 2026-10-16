@@ -55,6 +55,15 @@ const Sfx = (() => {
     if (!SAVE.settings.voice || !window.speechSynthesis) return;
     try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'en-GB'; u.rate = 1.0; u.pitch = .9; u.volume = .9; speechSynthesis.speak(u) } catch (e) {}
   }
+  // 关键分：观众安静 + 心跳声
+  let beat = null;
+  function tension(on) {
+    if (!ac) return;
+    clearInterval(beat); beat = null;
+    setCrowd(on ? .006 : .035);
+    if (on && SAVE.settings.sound) beat = setInterval(() => { tone(62, 48, .14, .45); tone(58, 44, .12, .35, 'sine', .18) }, 900);
+  }
+  function whoosh() { noise(.5, 900, .35, .6, 'bandpass'); tone(300, 1400, .4, .1, 'sawtooth') }
   function setCrowd(level) { if (crowdGain) crowdGain.gain.setTargetAtTime(level, ac.currentTime, .5) }
   function ui() { if (on()) tone(900, 700, .05, .08, 'triangle') }
   function coin() { if (on()) { tone(1200, 1200, .08, .1, 'square'); tone(1600, 1600, .12, .08, 'square', .07) } }
@@ -70,11 +79,12 @@ const Sfx = (() => {
     else if (type === 'cord') { noise(.06, 500, .25); ooh(.3) }
     else if (type === 'point') { if (!e.train) { applause(e.w === 0 ? .9 : .4); if (e.why === 'out' || e.why === 'net') ooh(.18) } }
     else if (type === 'game') applause(1);
-    else if (type === 'matchOver') { applause(1.2); if (e.w === 0) [523, 659, 784, 1047].forEach((f, i) => tone(f, f, .25, .12, 'triangle', i * .12)) }
+    else if (type === 'matchOver') { tension(false); applause(1.2); if (e.w === 0) [523, 659, 784, 1047].forEach((f, i) => tone(f, f, .25, .12, 'triangle', i * .12)) }
     else if (type === 'skill') tone(400, 1200, .35, .12, 'sawtooth');
+    else if (type === 'ult') { whoosh(); ooh(.35) }
     else if (type === 'call') speak(e.text);
     else if (type === 'fault') speak(e.call);
     else if (type === 'matchStart') setCrowd(.035);
   }
-  return { init, onEvent, setEnabled, setCrowd, ui, coin, speak };
+  return { init, onEvent, setEnabled, setCrowd, ui, coin, speak, tension, applause: v => on() && applause(v) };
 })();
