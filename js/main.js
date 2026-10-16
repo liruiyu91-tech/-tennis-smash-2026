@@ -17,14 +17,28 @@
   addEventListener('resize', () => { UI.resizeOverlay(); UI.layoutSafe() });
   document.addEventListener('visibilitychange', () => { if (document.hidden && M && phase !== 'over' && !paused) document.getElementById('pauseBtn').click() });
 
+  // 物理固定 120Hz，屏幕刷新率不一定整除（60/90/120Hz、掉帧），
+  // 画面按两次物理步之间的插值位置绘制，否则球和人会一顿一顿地跳
+  const objs = () => [ball, P, A], prev = [{}, {}, {}], KEYS = ['x', 'y', 'z'];
+  const snap = () => objs().forEach((o, i) => { for (const k of KEYS) prev[i][k] = o[k] });
   let last = 0, acc = 0;
   function frame(t) {
-    const rdt = Math.min(.05, (t - last) / 1000 || 0); last = t;
+    const raw = t - last, rdt = Math.min(.05, raw / 1000 || 0); last = t;
+    let alpha = 1;
     if (M && !paused && !UI.blocking) {
       if (hitStop > 0) hitStop -= rdt;
-      else { acc += rdt; while (acc >= DT) { tick(DT); acc -= DT } }
+      else { acc += rdt; while (acc >= DT) { snap(); tick(DT); acc -= DT } }
+      alpha = acc / DT;
     }
-    Scene3D.update(rdt); Scene3D.render(); UI.frame(rdt);
+    const cur = M && alpha < 1 ? objs().map((o, i) => {
+      const c = {}; for (const k of KEYS) c[k] = o[k];
+      const p = prev[i];
+      if (p.x !== undefined && Math.abs(c.x - p.x) + Math.abs(c.y - p.y) < 2) for (const k of KEYS) if (typeof c[k] === 'number') o[k] = p[k] + (c[k] - p[k]) * alpha;
+      return c;
+    }) : null;
+    Scene3D.update(rdt); Scene3D.render();
+    if (cur) objs().forEach((o, i) => Object.assign(o, cur[i]));
+    UI.frame(rdt); Scene3D.perf(raw);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

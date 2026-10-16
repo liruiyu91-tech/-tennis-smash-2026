@@ -514,9 +514,12 @@ const UI = (() => {
   });
 
   // ---------- 覆盖层：滑动轨迹 + 飘字 ----------
+  let ovDirty = true, lastSt = -1;
   function frame(dt) {
     const W = innerWidth, H = innerHeight;
-    octx.clearRect(0, 0, W, H);
+    // 覆盖层上一帧没画东西就不用清屏（全屏清除在手机上也有开销）
+    if (ovDirty) octx.clearRect(0, 0, W, H);
+    ovDirty = swipeTrail.length > 0 || popups.length > 0 || (screen === 'match' && (!!hawk || !!(touch && aim)));
     if (sayT > 0) { sayT -= dt; if (sayT <= 0) $('say').style.opacity = 0 }
     // 滑动轨迹
     const tnow = performance.now();
@@ -542,7 +545,7 @@ const UI = (() => {
     }
     octx.globalAlpha = 1;
     if (screen === 'match') {
-      const m = $('stM').firstElementChild; m.style.transform = `scaleX(${P.st / 100})`;
+      const st = Math.round(P.st); if (st !== lastSt) { lastSt = st; $('stM').firstElementChild.style.transform = `scaleX(${st / 100})` }
       if (hawk) drawHawk(dt);
       if (pendingReplay && !blocking && now >= pendingReplay.at && phase === 'dead') runReplay();
       if (touch && aim && serving()) drawPower(aim.tap ? .6 : aim.d);

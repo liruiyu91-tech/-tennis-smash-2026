@@ -29,7 +29,7 @@ const Scene3D = (() => {
   function init(canvas, quality) {
     hq = quality;
     renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    renderer.shadowMap.enabled = true; renderer.shadowMap.type = T.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = T.PCFShadowMap;
     scene = new T.Scene();
     camera = new T.PerspectiveCamera(40, 1, .1, 400);
     hemi = new T.HemisphereLight(0xffffff, 0x445566, .75); scene.add(hemi);
@@ -47,12 +47,39 @@ const Scene3D = (() => {
   }
   function setQuality(q) {
     hq = q;
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, hq ? 2 : 1.25));
+    dprCap = 9; autoShadowOff = false;
+    applyDpr();
     renderer.shadowMap.enabled = hq; sun.castShadow = hq;
-    sun.shadow.mapSize.set(hq ? 2048 : 512, hq ? 2048 : 512);
+    sun.shadow.mapSize.set(hq ? 1024 : 512, hq ? 1024 : 512);
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null }
     scene.traverse(o => { if (o.isMesh && o.userData.cast !== false) o.castShadow = hq; if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true) });
     resize(W, H, safe);
+  }
+  // 手机屏幕像素密度常为 3，按 3 倍渲染非常吃 GPU；高画质最多 1.5 倍（配合抗锯齿已足够清晰）
+  let dprCap = 9, autoShadowOff = false, perfAvg = 16, perfT = 0;
+  function applyDpr() { renderer.setPixelRatio(Math.min(devicePixelRatio || 1, hq ? 1.5 : 1, dprCap)) }
+  // 自动画质：比赛中持续掉帧就逐级降低分辨率，最后关阴影
+  function perf(ms) {
+    if (mode !== 'game' || !(ms > 0) || ms > 120) return;   // 切后台回来等异常帧不计
+    perfAvg += (ms - perfAvg) * .05;
+    if ((perfT += ms) < 3000) return;
+    perfT = 0;
+    if (perfAvg < 24) return;
+    const cur = renderer.getPixelRatio();
+    if (cur > 1.01) { dprCap = cur > 1.26 ? 1.25 : 1; applyDpr(); renderer.setSize(W, H, false) }
+    else if (hq && !autoShadowOff) {
+      autoShadowOff = true; renderer.shadowMap.enabled = false; sun.castShadow = false;
+      scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true) });
+    }
+    perfAvg = 16;
+  }
+  // 预编译所有着色器（包括暂时隐藏的特效），避免第一次出现时卡一下
+  function warmup() {
+    if (!renderer || !camera) return;
+    const hidden = [];
+    scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true } });
+    try { renderer.compile(scene, camera) } catch (e) {}
+    hidden.forEach(o => o.visible = false);
   }
 
   // ---------- 球员模型 ----------
@@ -224,8 +251,8 @@ const Scene3D = (() => {
     if (key === 'A') m.root.visible = mode !== 'menu';
     return m;
   }
-  function setPlayerLook(look, bh) { rebuild('P', look, bh) }
-  function setOpponentLook(look, bh) { rebuild('A', look, bh) }
+  function setPlayerLook(look, bh) { rebuild('P', look, bh); warmup() }
+  function setOpponentLook(look, bh) { rebuild('A', look, bh); warmup() }
 
   // ---------- 动作姿态（弧度）----------
   // 模型面朝 +Z，右手在 -X。hipY 转髋、torsoY 转肩（相对髋），两者先后不同步 = 髋肩分离发力
@@ -586,6 +613,7 @@ const Scene3D = (() => {
       const glow = new T.Sprite(new T.SpriteMaterial({ map: dotTex, color: 0xfff3c4, transparent: true, opacity: .7, depthWrite: false, blending: T.AdditiveBlending })); glow.scale.set(14, 14, 1); glow.position.y = 22.5; g.add(glow);
       add(g, sx * (DHW + 14), 0, sz * (HL + 6));
     }
+    warmup();
   }
   function buildNet(add) {
     const L = DHW + .45, segs = 24;
@@ -627,7 +655,7 @@ const Scene3D = (() => {
     }
     const filled = seats.filter(() => Math.random() < .86);
     const bodyGeo = new T.BoxGeometry(.4, .55, .3); bodyGeo.translate(0, .3, 0);
-    const headGeo = new T.SphereGeometry(.12, 8, 6); headGeo.translate(0, .72, 0);
+    const headGeo = new T.SphereGeometry(.12, 6, 4); headGeo.translate(0, .72, 0);
     const bodies = new T.InstancedMesh(bodyGeo, lam('#ffffff'), filled.length), heads = new T.InstancedMesh(headGeo, lam('#ffffff'), filled.length);
     const shirts = ['#e94b3c', '#f5f5f5', '#2f6fe0', '#ffd23f', '#2f9e5b', '#ff8fbf', '#7b4dff', '#1b1b1f', '#ff8a1f', '#22b5a5'];
     const skins = ['#f1c9a5', '#e2b08a', '#c99068', '#8a5a3c', '#f6d8c2'];
@@ -969,5 +997,5 @@ const Scene3D = (() => {
     renderer.render(scene, camera);
   }
   return { init, buildArena, resize, update, render, setMode, setAim, setPlayerLook, setOpponentLook, onEvent, project, setQuality, screenToGround,
-    playIntro, endIntro, startReplay, endReplay, ceremony, endCeremony, debugPose, debugCam, get _models() { return models }, get mode() { return mode }, get arena() { return arena } };
+    playIntro, endIntro, startReplay, endReplay, ceremony, endCeremony, debugPose, debugCam, get _models() { return models }, perf, warmup, get _renderer() { return renderer }, get mode() { return mode }, get arena() { return arena } };
 })();
