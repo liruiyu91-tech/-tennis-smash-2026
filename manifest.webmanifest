@@ -1,10 +1,12 @@
 {
-  "name": "Tennis Smash 2026 V4",
-  "short_name": "Tennis Smash V4",
+  "name": "Tennis Smash 2026",
+  "short_name": "Tennis Smash",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#061017",
   "theme_color": "#061017",
-  "orientation": "landscape",
-  "icons": []
+  "orientation": "any",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
 }
