@@ -156,7 +156,7 @@ const UI = (() => {
     const s = el(`<section class="screen solid"></section>`);
     s.appendChild(header('设置'));
     const list = el(`<div class="scroll"></div>`);
-    const items = [['sound', '音效与观众声'], ['voice', '裁判英文报分'], ['vibe', '击球震动'], ['hq', '高画质（阴影、高清）']];
+    const items = [['sound', '音效与观众声'], ['voice', '裁判英文报分'], ['vibe', '击球震动'], ['hq', '高画质（阴影、高清）'], ['fps', '显示帧率（排查卡顿用）']];
     items.forEach(([k, name]) => {
       const c = el(`<button class="card toggle"><span>${name}</span><span class="sw-t ${SAVE.settings[k] ? 'on' : ''}"></span></button>`);
       c.onclick = click(() => { SAVE.settings[k] = !SAVE.settings[k]; persist(); applySettings(); c.querySelector('.sw-t').classList.toggle('on', SAVE.settings[k]) });

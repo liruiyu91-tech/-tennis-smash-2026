@@ -21,6 +21,18 @@
   // 画面按两次物理步之间的插值位置绘制，否则球和人会一顿一顿地跳
   const objs = () => [ball, P, A], prev = [{}, {}, {}], KEYS = ['x', 'y', 'z'];
   const snap = () => objs().forEach((o, i) => { for (const k of KEYS) prev[i][k] = o[k] });
+  // 帧率面板（设置里打开）：每 0.5 秒显示帧率、最慢一帧、掉帧次数、渲染倍率和阴影
+  let fpsEl = null, fpsN = 0, fpsT = 0, fpsMax = 0, fpsDrop = 0;
+  function fpsMeter(ms) {
+    if (!SAVE.settings.fps) { if (fpsEl) { fpsEl.remove(); fpsEl = null } return }
+    if (!fpsEl) { fpsEl = document.createElement('div'); fpsEl.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 2px);z-index:98;pointer-events:none;background:rgba(0,0,0,.6);color:#d7f94a;font:700 11px/1.3 monospace;padding:2px 8px;border-radius:6px;white-space:nowrap'; document.body.appendChild(fpsEl) }
+    if (!(ms > 0) || ms > 1000) return;
+    fpsN++; fpsT += ms; fpsMax = Math.max(fpsMax, ms); if (ms > 25) fpsDrop++;
+    if (fpsT < 500) return;
+    const R = Scene3D._renderer;
+    fpsEl.textContent = `${Math.round(fpsN * 1000 / fpsT)} fps · 最慢 ${Math.round(fpsMax)}ms · 掉帧 ${fpsDrop} · ${R.getPixelRatio()}x · 阴影${R.shadowMap.enabled ? '开' : '关'}`;
+    fpsN = fpsT = fpsMax = fpsDrop = 0;
+  }
   let last = 0, acc = 0;
   function frame(t) {
     const raw = t - last, rdt = Math.min(.05, raw / 1000 || 0); last = t;
@@ -38,7 +50,7 @@
     }) : null;
     Scene3D.update(rdt); Scene3D.render();
     if (cur) objs().forEach((o, i) => Object.assign(o, cur[i]));
-    UI.frame(rdt); Scene3D.perf(raw);
+    UI.frame(rdt); Scene3D.perf(raw); fpsMeter(raw);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
