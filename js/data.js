@@ -99,7 +99,7 @@ const CHARACTERS = [
 ];
 // 对手中后期的选手也会放必杀技
 const AI_ULT = { serve: { id: 'eagle', name: '天鹰发球' }, aggressive: { id: 'meteor', name: '流星重炮' }, defender: { id: 'wall', name: '铁壁防守' }, baseline: { id: 'meteor', name: '流星重炮' } };
-const portrait = (id, mood = 'n') => `assets/portraits/${id}-${mood}.svg`;
+const portrait = (id, mood = 'n') => (typeof artUrl === 'function' && (artUrl(`${id}-${mood}`) || artUrl(`${id}-n`))) || `assets/portraits/${id}-${mood}.svg`;
 const arenaOpps = i => OPPS.slice(i * 3, i * 3 + 3);
 
 function aiParams(t, style) {
@@ -114,15 +114,69 @@ function aiParams(t, style) {
 const QUICK = [{ name: '普通', t: .15 }, { name: '困难', t: .55 }, { name: 'Pro', t: .95 }];
 
 // ================= 养成 =================
-const MAXLV = 10;
+// ---------- 属性：装备和天赋都加"属性点"，换算成比赛数值见 playerStats() ----------
 const STATS = [
-  { id: 'power',   name: '力量', gear: '碳纤维球拍', desc: lv => `击球速度 +${3 * (lv - 1)}%` },
-  { id: 'control', name: '控制', gear: '职业球线',   desc: lv => `落点误差 -${5 * (lv - 1)}%` },
-  { id: 'agility', name: '敏捷', gear: '轻量球鞋',   desc: lv => `跑速 ${(5.6 + .18 * (lv - 1)).toFixed(2)} m/s` },
-  { id: 'stamina', name: '耐力', gear: '能量护腕',   desc: lv => `体力消耗 -${6 * (lv - 1)}%` },
-  { id: 'serve',   name: '发球', gear: '发球特训',   desc: lv => `一发 ${Math.round((34 + 1.2 * (lv - 1)) * 3.6)} km/h` },
+  { id: 'power',   name: '力量', desc: p => `球速 +${Math.min(32, p * .4).toFixed(0)}%` },
+  { id: 'control', name: '控制', desc: p => `误差 -${Math.min(55, p * .8).toFixed(0)}%` },
+  { id: 'speed',   name: '速度', desc: p => `跑速 ${Math.min(7.4, 5.6 + .03 * p).toFixed(2)} m/s` },
+  { id: 'stamina', name: '耐力', desc: p => `体力消耗 -${Math.min(60, p * .6).toFixed(0)}%` },
+  { id: 'serve',   name: '发球', desc: p => `一发 ${Math.round((34 + .14 * p) * 3.6)} km/h` },
 ];
-const upgradeCost = lv => Math.round(40 * Math.pow(lv, 1.5) / 10) * 10;
+// ---------- 装备：4 个部位 × 4 种品质，可升级；传奇装备带特效 ----------
+const RARITY = [
+  { id: 'c', name: '普通', col: '#9fb0c9', max: 10, cost: 30 },
+  { id: 'r', name: '稀有', col: '#4b92ff', max: 15, cost: 50 },
+  { id: 'e', name: '史诗', col: '#a66bff', max: 20, cost: 80 },
+  { id: 'l', name: '传奇', col: '#ffc84a', max: 25, cost: 120 },
+];
+const SLOTS = [{ id: 'racket', name: '球拍' }, { id: 'strings', name: '球线' }, { id: 'shoes', name: '球鞋' }, { id: 'band', name: '护腕' }];
+const EQUIP = [
+  { id: 'r1', slot: 'racket',  rar: 0, name: '入门球拍',   st: { power: 4, control: 3 } },
+  { id: 'r2', slot: 'racket',  rar: 1, name: '碳纤维球拍', st: { power: 7, control: 4 }, price: 600 },
+  { id: 'r3', slot: 'racket',  rar: 2, name: '重炮球拍',   st: { power: 11, serve: 5 }, price: 1800 },
+  { id: 'r4', slot: 'racket',  rar: 3, name: '天王之拍',   st: { power: 12, control: 7, serve: 6 }, perk: 'perfectPow', perkText: 'PERFECT 击球球速再 +6%' },
+  { id: 's1', slot: 'strings', rar: 0, name: '尼龙球线',   st: { control: 5 } },
+  { id: 's2', slot: 'strings', rar: 1, name: '聚酯球线',   st: { control: 7, power: 2 }, price: 600 },
+  { id: 's3', slot: 'strings', rar: 2, name: '旋转球线',   st: { control: 9, power: 4 }, price: 1800, perk: 'heavy', perkText: '上旋、大角度更难回：对手误差 +20%' },
+  { id: 's4', slot: 'strings', rar: 3, name: '天蚕丝线',   st: { control: 13, power: 5 }, perk: 'zone', perkText: 'Zone 多持续 2 拍' },
+  { id: 'h1', slot: 'shoes',   rar: 0, name: '训练球鞋',   st: { speed: 5 } },
+  { id: 'h2', slot: 'shoes',   rar: 1, name: '轻量跑鞋',   st: { speed: 7, stamina: 2 }, price: 600 },
+  { id: 'h3', slot: 'shoes',   rar: 2, name: '滑步战靴',   st: { speed: 9, stamina: 5 }, price: 1800, perk: 'reach', perkText: '救球范围 +0.12 米' },
+  { id: 'h4', slot: 'shoes',   rar: 3, name: '闪电战靴',   st: { speed: 13, stamina: 6 }, perk: 'react', perkText: '起步反应快 0.04 秒' },
+  { id: 'b1', slot: 'band',    rar: 0, name: '棉质护腕',   st: { stamina: 5 } },
+  { id: 'b2', slot: 'band',    rar: 1, name: '能量护腕',   st: { stamina: 6, serve: 3 }, price: 600 },
+  { id: 'b3', slot: 'band',    rar: 2, name: '发球护腕',   st: { serve: 9, stamina: 4 }, price: 1800 },
+  { id: 'b4', slot: 'band',    rar: 3, name: '冠军护腕',   st: { stamina: 9, serve: 7, control: 3 }, perk: 'energy', perkText: '击球能量 +25%' },
+];
+const eqDef = id => EQUIP.find(e => e.id === id);
+const eqStat = (id, lv) => { const d = eqDef(id), k = 1 + .14 * (lv - 1), o = {}; for (const s in d.st) o[s] = Math.round(d.st[s] * k * 10) / 10; return o };
+const eqCost = (id, lv) => Math.round(RARITY[eqDef(id).rar].cost * Math.pow(lv, 1.35) / 10) * 10;
+// ---------- 天赋：每升 1 级得 1 点；每系投满 5 点解锁终极天赋 ----------
+const TALENTS = [
+  { br: 0, id: 'pow',    name: '重炮',     max: 5, st: { power: 2.5 },   desc: '每级力量 +2.5' },
+  { br: 0, id: 'srv',    name: '发球机器', max: 5, st: { serve: 3 },     desc: '每级发球 +3' },
+  { br: 0, id: 'fire',   name: '爆发专精', max: 3, desc: '每级「爆发」类技能少耗 6 能量' },
+  { br: 0, id: 'killer', name: '终结者',   max: 1, cap: true, desc: '对手被调动时（来球浅、你不吃力）球速 +10%，误差 -20%' },
+  { br: 1, id: 'spd',    name: '疾风步',   max: 5, st: { speed: 2.5 },   desc: '每级速度 +2.5' },
+  { br: 1, id: 'sta',    name: '铁人',     max: 5, st: { stamina: 3 },   desc: '每级耐力 +3' },
+  { br: 1, id: 'arm',    name: '长臂',     max: 3, desc: '每级救球范围 +0.05 米' },
+  { br: 1, id: 'clutch', name: '绝地反击', max: 1, cap: true, desc: '救远球时误差 -30%，回球更深' },
+  { br: 2, id: 'ctl',    name: '精准',     max: 5, st: { control: 2.5 }, desc: '每级控制 +2.5' },
+  { br: 2, id: 'timing', name: '时机大师', max: 3, desc: '每级 PERFECT 判定窗口 +10%' },
+  { br: 2, id: 'charge', name: '能量回路', max: 3, desc: '每级击球能量 +12%' },
+  { br: 2, id: 'curve',  name: '弧线大师', max: 1, cap: true, desc: '弧线球侧旋 +35%，并且不再增加误差' },
+];
+const TALENT_BR = [{ name: '进攻', col: '#ff5a4f' }, { name: '防守', col: '#4b92ff' }, { name: '技巧', col: '#5fe07a' }];
+// ---------- 主动技能：从技能池选 2 个带进比赛（必杀技另算）----------
+const SKILLS = [
+  { id: 'fire',    name: '爆发',     icon: '🔥', cost: 50, desc: '下一拍更快更准', fire: true },
+  { id: 'zone',    name: 'Zone',     icon: '🎯', cost: 50, desc: '3 拍内 PERFECT 判定更宽、够得更远' },
+  { id: 'recover', name: '回气',     icon: '💧', cost: 40, desc: '立刻恢复 45 体力' },
+  { id: 'ace',     name: '精准发球', icon: '🚀', cost: 50, desc: '下一个发球球速 +12%、误差减半', fire: true },
+  { id: 'guard',   name: '神救',     icon: '🛡️', cost: 60, desc: '下一个够不到的球自动救回（挑高球）' },
+  { id: 'focus',   name: '专注',     icon: '🧠', cost: 45, desc: '8 秒内来球像慢动作：起步更早、误差 -25%' },
+];
+const skDef = id => SKILLS.find(s => s.id === id);
 const OUTFITS = [
   { id: 'sig',     name: '招牌球衣', cost: 0 },
   { id: 'fire',    name: '烈焰红', shirt: '#e5412f', shorts: '#2a2a2a', band: '#ffd23f', cost: 300 },

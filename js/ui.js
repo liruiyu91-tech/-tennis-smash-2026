@@ -23,6 +23,11 @@ const UI = (() => {
     slice: svg('<path d="M3 9c6 7 12 7 18 4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="m17 10 4 3-3 3" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'),
     lob: svg('<path d="M3 20C6 2 18 2 21 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'),
     drop: svg('<path d="M3 14c4-8 8-8 10 4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="19" r="2.4"/>'),
+    home: svg('<path d="M3 11.5 12 3.5l9 8V21h-6.5v-6h-5v6H3z"/>'),
+    tasks: svg('<path d="M4 5h3v3H4zM4 11h3v3H4zM4 17h3v3H4z"/><path d="M10 6.5h10M10 12.5h10M10 18.5h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>'),
+    gift: svg('<path d="M3 9h18v4H3zM5 13h14v8H5z"/><path d="M12 9v12M12 9C10 5 6 5 6.5 7.5S11 9 12 9zm0 0c2-4 6-4 5.5-1.5S13 9 12 9z" fill="none" stroke="#0a1330" stroke-width="1.6"/>'),
+    tree: svg('<circle cx="12" cy="4.5" r="2.5"/><circle cx="12" cy="12.5" r="2.5"/><circle cx="5" cy="19.5" r="2.5"/><circle cx="19" cy="19.5" r="2.5"/><path d="M12 7v3M10.5 14.5 6.5 17.5M13.5 14.5l4 3" stroke="currentColor" stroke-width="2" fill="none"/>'),
+    play: svg('<path d="M8 5v14l11-7z"/>'),
     net: svg('<path d="M3 20V9h18v11M3 12h18M3 15h18M7 9v11M11 9v11M15 9v11M19 9v11" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7V2m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>'),
   };
   const coinHtml = n => `<span class="pill"><i class="coin"></i><span>${n}</span></span>`;
@@ -42,13 +47,21 @@ const UI = (() => {
     $('hud').classList.toggle('hidden', name !== 'match');
     root.innerHTML = '';
     if (name !== 'match') { Scene3D.setMode('menu'); Scene3D.setAim(null); Sfx.enterMenu(); hawk = null }
-    ({ home, career, quick, gear, settings, vs, chars, match: () => {} })[name](arg);
+    ({ home, career, quick, gear, settings, vs, chars, talents, tasks, match: () => {} })[name](arg);
+    if (TABS.some(t => t[0] === name)) tabbar(name);
     layoutSafe();
+  }
+  const TABS = [['home', '主页', 'home'], ['chars', '球员', 'star'], ['gear', '装备', 'racket'], ['talents', '天赋', 'tree'], ['tasks', '任务', 'tasks']];
+  function tabbar(cur) {
+    const n = Meta.claimable(), tp = talentPoints() - talentSpent();
+    const t = el(`<nav class="tabbar">${TABS.map(([k, label, ic]) => `<button data-t="${k}" class="${k === cur ? 'on' : ''}">${IC[ic]}${label}${k === 'tasks' && n ? `<span class="dot">${n}</span>` : ''}${k === 'talents' && tp > 0 ? `<span class="dot">${tp}</span>` : ''}</button>`).join('')}</nav>`);
+    t.querySelectorAll('button').forEach(b => b.onclick = click(() => { if (b.dataset.t !== cur) show(b.dataset.t, b.dataset.t === 'gear' ? 'equip' : undefined) }));
+    root.appendChild(t);
   }
   function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild }
   function header(title, back = 'home') {
-    const h = el(`<div class="head"><button class="round" aria-label="返回">${IC.back}</button><h2>${title}</h2><div style="margin-left:auto">${coinHtml(SAVE.coins)}</div></div>`);
-    h.querySelector('button').onclick = click(() => show(back));
+    const h = el(`<div class="head">${back ? `<button class="round" aria-label="返回">${IC.back}</button>` : ''}<h2>${title}</h2><div style="margin-left:auto">${coinHtml(SAVE.coins)}</div></div>`);
+    if (back) h.querySelector('button').onclick = click(() => show(back));
     return h;
   }
 
@@ -61,28 +74,45 @@ const UI = (() => {
     h.querySelector('button').onclick = click(() => { SAVE.a2hsHidden = true; persist(); h.remove() });
     s.appendChild(h);
   }
+  function arenaBg(a) {
+    const art = artUrl('arena-' + a.id + '-card') || artUrl('arena-' + a.id);
+    return art ? `url(${art})` : a.night ? 'linear-gradient(135deg,#3b3fa0,#0d1330)' : `linear-gradient(135deg,${a.court},${a.apron === a.court ? shade(a.court, -25) : a.apron})`;
+  }
   function home() {
-    const next = nextCareer();
-    const s = el(`<section class="screen" id="home">
+    Meta.ensure();
+    const nx = nextCareer() || { i: 3, r: 2 }, a = ARENAS[nx.i], opp = arenaOpps(nx.i)[nx.r], done = SAVE.career[nx.i];
+    const need = Meta.xpNeed(SAVE.lvl), mc = Meta.missions().filter(m => m.done && !m.claimed).length, tp = talentPoints() - talentSpent();
+    const s = el(`<section class="screen tabbed" id="home">
       <div class="topbar">
-        <div class="profile"><div class="avatar" style="background:${playerLook().shirt}">${img(myChar().id, 'n')}</div><div><div class="pname">${esc(myChar().name)} · ${myChar().title}</div><div class="plv">等级 ${playerLevel()} · ${SAVE.wins} 胜 ${SAVE.losses} 负</div></div></div>
-        <div class="pills"><span class="pill"><span class="cup">${IC.cup}</span><span>${SAVE.trophies}</span></span>${coinHtml(SAVE.coins)}</div>
+        <div class="me"><div class="avwrap"><div class="avatar" style="background:${playerLook().shirt}">${img(myChar().id, 'n')}</div><span class="lvb">${SAVE.lvl}</span></div>
+          <div class="who"><div class="pname">${esc(myChar().name)} · ${myChar().title}</div><div class="xpbar"><i style="width:${SAVE.xp / need * 100}%"></i></div></div></div>
+        <div class="pills">${coinHtml(SAVE.coins)}<button class="round" id="bSet" aria-label="设置">${IC.cog}</button></div>
       </div>
-      <div class="logo"><span class="l1">TENNIS</span><span class="l2">SMASH</span><span class="l3">2026</span></div>
+      <div class="fabs">
+        <button class="fab gold" id="bDaily"><span class="ic">${IC.gift}</span>签到${Meta.loginReady() ? '<span class="dot">1</span>' : ''}</button>
+        <button class="fab" id="bTasks"><span class="ic">${IC.tasks}</span>任务${mc ? `<span class="dot">${mc}</span>` : ''}</button>
+        <button class="fab" id="bTal"><span class="ic">${IC.tree}</span>天赋${tp > 0 ? `<span class="dot">${tp}</span>` : ''}</button>
+      </div>
+      <div class="power"><span>战力</span><b>${powerRating()}</b><span>${SAVE.wins} 胜 ${SAVE.losses} 负 · 奖杯 ${SAVE.trophies}</span></div>
       <div class="home-actions">
-        <button class="btn primary big" id="bCareer">巡回赛<small>${next ? `${ARENAS[next.i].name} · ${ROUNDS[next.r]}` : '全部冠军已到手 · 可重赛刷金币'}</small></button>
-        <div class="row2"><button class="btn blue" id="bQuick">快速比赛</button><button class="btn" id="bTrain">训练场</button></div>
-        <div class="row3 four"><button class="btn" id="bChar">${IC.star}球员</button><button class="btn" id="bGear">${IC.racket}装备</button><button class="btn" id="bWard">${IC.shirt}球衣</button><button class="btn" id="bSet">${IC.cog}设置</button></div>
+        <div class="tour" style="background-image:${arenaBg(a)}">
+          <div class="kick">巡回赛 · ${a.surfName}</div><h3>${a.name}</h3>
+          <div class="rounds">${ROUNDS.map((r, k) => `<div class="rd ${k < done ? 'done' : k === done ? 'next' : ''}">${r}</div>`).join('')}</div>
+          <button class="btn primary big play" id="bCareer">开始比赛<small>${done >= 3 ? '全部冠军已到手 · 重赛刷奖励' : '对手：' + esc(opp.name)}</small></button>
+        </div>
+        <div class="row2 mini"><button class="btn blue" id="bQuick">快速比赛</button><button class="btn" id="bTrain">训练场</button></div>
       </div></section>`);
     root.appendChild(s);
     installHint(s);
-    $('bCareer').onclick = click(() => show('career'));
+    $('bCareer').onclick = click(() => show('vs', { type: 'career', arenaIdx: nx.i, round: Math.min(done, 2), replay: done >= 3 }));
+    s.querySelector('.tour h3').onclick = click(() => show('career'));
     $('bQuick').onclick = click(() => show('quick'));
     $('bTrain').onclick = click(() => begin({ type: 'train', arenaIdx: SAVE.quick.arena, opp: COACH, setLen: 4 }));
-    $('bChar').onclick = click(() => show('chars'));
-    $('bGear').onclick = click(() => show('gear', 'stats'));
-    $('bWard').onclick = click(() => show('gear', 'outfit'));
     $('bSet').onclick = click(() => show('settings'));
+    $('bDaily').onclick = click(() => show('tasks'));
+    $('bTasks').onclick = click(() => show('tasks'));
+    $('bTal').onclick = click(() => show('talents'));
+    if (SAVE.refund) { toast(`装备系统升级：已退回 ${SAVE.refund} 金币`); delete SAVE.refund; persist() }
   }
   function nextCareer() {
     for (let i = 0; i < ARENAS.length; i++) if (SAVE.career[i] < 3) return arenaUnlocked(i) ? { i, r: SAVE.career[i] } : null;
@@ -95,8 +125,7 @@ const UI = (() => {
     const list = el(`<div class="scroll"></div>`);
     ARENAS.forEach((a, i) => {
       const un = arenaUnlocked(i), done = SAVE.career[i];
-      const bg = a.night ? 'linear-gradient(135deg,#2b2f7a,#0d1330)' : `linear-gradient(135deg,${a.court},${a.apron === a.court ? shade(a.court, -25) : a.apron})`;
-      const c = el(`<div class="arena ${un ? '' : 'locked'}" style="background:${bg}">
+      const c = el(`<div class="arena ${un ? '' : 'locked'}" style="background:${arenaBg(a)};background-size:cover;background-position:center">
         <h3>${a.name}</h3>
         <div class="meta"><span class="tag">${a.surfName}</span><span class="tag">冠军奖金 <i class="coin" style="width:12px;height:12px;vertical-align:-1px"></i> ${a.prize}</span>${done >= 3 ? '<span class="tag">🏆 已夺冠</span>' : ''}</div>
         ${un ? '' : `<div class="lockmsg"><span style="width:20px">${IC.lock}</span>赢得「${ARENAS[i - 1].short}」冠军后解锁</div>`}
@@ -128,24 +157,64 @@ const UI = (() => {
     $('qGo').onclick = click(() => begin({ type: 'quick', arenaIdx: q.arena, opp: Object.assign({ t: QUICK[q.diff].t }, QUICK_OPPS[q.diff]), setLen: q.len, diff: q.diff }));
   }
 
-  function gear(tab) {
-    const s = el(`<section class="screen solid"></section>`);
-    s.appendChild(header(tab === 'outfit' ? '球衣' : '装备升级'));
-    const tabs = el(`<div class="tabs"><button data-t="stats">属性升级</button><button data-t="outfit">球衣</button></div>`);
+  // ---------- 装备 / 技能 / 球衣 ----------
+  const SLOT_IC = { racket: '🎾', strings: '🧶', shoes: '👟', band: '💪' };
+  const statLine = o => Object.entries(o).map(([k, v]) => `${STATS.find(x => x.id === k).name} +${v}`).join(' · ');
+  let openSlot = null;
+  function gear(tab = 'equip') {
+    if (tab === 'stats') tab = 'equip';
+    const s = el(`<section class="screen solid tabbed"></section>`);
+    s.appendChild(header({ equip: '装备', skills: '技能', outfit: '球衣' }[tab], null));
+    const tabs = el(`<div class="tabs" style="grid-template-columns:repeat(3,1fr)"><button data-t="equip">装备</button><button data-t="skills">技能</button><button data-t="outfit">球衣</button></div>`);
     tabs.querySelectorAll('button').forEach(b => { b.classList.toggle('on', b.dataset.t === tab); b.onclick = click(() => show('gear', b.dataset.t)) });
     s.appendChild(tabs);
     const list = el(`<div class="scroll"></div>`);
-    if (tab === 'stats') {
-      STATS.forEach(sd => {
-        const lv = SAVE.gear[sd.id], max = lv >= MAXLV, cost = upgradeCost(lv);
-        const c = el(`<div class="card stat"><div><h4>${sd.name} · Lv ${lv}</h4><div class="g">${sd.gear}</div></div>
-          <button class="btn ${max ? '' : 'primary'} up" ${max || SAVE.coins < cost ? 'disabled' : ''}>${max ? '已满级' : `<i class="coin" style="width:18px;height:18px"></i>${cost}`}</button>
-          <div class="lvbar">${Array.from({ length: MAXLV }, (_, k) => `<i class="${k < lv ? 'on' : ''}"></i>`).join('')}</div>
-          <div class="eff">${sd.desc(lv)}${max ? '' : ` → <b style="color:var(--ball)">${sd.desc(lv + 1).replace(/^[^\d+-]*/, '')}</b>`}</div></div>`);
-        c.querySelector('button').onclick = click(() => { if (SAVE.coins < cost || max) return; SAVE.coins -= cost; SAVE.gear[sd.id]++; persist(); Sfx.coin(); vibrate(20); show('gear', 'stats') });
+    const again = () => { const y = list.scrollTop; show('gear', tab); const l = root.querySelector('.scroll'); if (l) l.scrollTop = y };
+    if (tab === 'equip') {
+      const pts = statPoints();
+      list.appendChild(el(`<div class="card statsum"><div class="sec-h" style="margin:0 0 8px"><b>属性</b><span>战力 ${powerRating()}</span></div>${STATS.map(st => `<div class="srow"><span>${st.name}</span><i><b style="width:${Math.min(100, pts[st.id] / 90 * 100)}%"></b></i><em>${Math.round(pts[st.id])}</em><small>${st.desc(pts[st.id])}</small></div>`).join('')}</div>`));
+      SLOTS.forEach(sl => {
+        const id = SAVE.equip[sl.id], d = id && eqDef(id), lv = id ? SAVE.items[id] : 0, R = d && RARITY[d.rar];
+        const max = d && lv >= R.max, cost = d && eqCost(id, lv);
+        const c = el(`<div class="card eq" style="--rc:${R ? R.col : '#555'}">
+          <div class="eqh"><span class="eqi">${SLOT_IC[sl.id]}</span><div class="eqn"><small>${sl.name} · <b style="color:var(--rc)">${R ? R.name : ''}</b></small><h4>${d ? d.name : '未装备'} <span>Lv ${lv}/${R ? R.max : '-'}</span></h4>
+            <div class="g">${d ? statLine(eqStat(id, lv)) : ''}</div>${d && d.perk ? `<div class="perk">★ ${d.perkText}</div>` : ''}</div></div>
+          <div class="row2"><button class="btn swap">更换</button><button class="btn ${max ? '' : 'primary'} upg" ${max || SAVE.coins < cost ? 'disabled' : ''}>${max ? '已满级' : `<i class="coin" style="width:16px;height:16px"></i>${cost} 升级`}</button></div>
+          <div class="eqlist" ${openSlot === sl.id ? '' : 'hidden'}></div></div>`);
+        c.querySelector('.upg').onclick = click(() => { if (!d || max || SAVE.coins < cost) return; SAVE.coins -= cost; SAVE.items[id]++; persist(); Sfx.coin(); vibrate(20); again() });
+        c.querySelector('.swap').onclick = click(() => { openSlot = openSlot === sl.id ? null : sl.id; again() });
+        const box = c.querySelector('.eqlist');
+        EQUIP.filter(e => e.slot === sl.id).forEach(e => {
+          const own = SAVE.items[e.id], on = id === e.id, rr = RARITY[e.rar];
+          const row = el(`<div class="opt" style="--rc:${rr.col}"><div><b>${e.name}</b> <small style="color:var(--rc)">${rr.name}</small><div class="g">${statLine(eqStat(e.id, own || 1))}${e.perk ? ' · ★ ' + e.perkText : ''}</div></div>
+            <button class="btn ${on ? '' : own ? 'blue' : e.price ? 'primary' : ''}" ${on || (!own && !e.price) ? 'disabled' : ''}>${on ? '装备中' : own ? '装备' : e.price ? `<i class="coin" style="width:14px;height:14px"></i>${e.price}` : '宝箱掉落'}</button></div>`);
+          row.querySelector('button').onclick = click(() => {
+            if (on) return;
+            if (!own) { if (SAVE.coins < e.price) { toast('金币不够'); return } SAVE.coins -= e.price; SAVE.items[e.id] = 1; Sfx.coin() }
+            SAVE.equip[sl.id] = e.id; persist(); again();
+          });
+          box.appendChild(row);
+        });
         list.appendChild(c);
       });
-      list.appendChild(el(`<p style="color:var(--mute);font-size:13px;line-height:1.6;margin:4px 2px">比赛和训练场都能赚金币。巡回赛夺冠有额外奖金。</p>`));
+      // 球包商店
+      list.appendChild(el(`<div class="sec-h"><b>球包商店</b><span>开出装备、金币和球衣</span></div>`));
+      const shop = el(`<div class="chests"></div>`);
+      [['common', 150], ['rare', 500], ['epic', 1500]].forEach(([k, price]) => {
+        const C = Meta.CHESTS[k];
+        const b = el(`<button class="chestbuy" style="--cc:${C.col}"><span class="mini-chest"></span><b>${C.name}</b><span class="price"><i class="coin" style="width:14px;height:14px"></i>${price}</span></button>`);
+        b.onclick = click(() => { if (SAVE.coins < price) { toast('金币不够'); return } SAVE.coins -= price; persist(); chestFx(k, again) });
+        shop.appendChild(b);
+      });
+      list.appendChild(shop);
+    } else if (tab === 'skills') {
+      list.appendChild(el(`<p class="note">选 2 个主动技能带进比赛（另外还有球员专属必杀技）。击球攒能量，能量够了点技能按钮释放。</p>`));
+      SKILLS.forEach(k => {
+        const on = SAVE.skills.includes(k.id);
+        const c = el(`<button class="card skillc ${on ? 'on' : ''}"><span class="ski">${k.icon}</span><div><h4>${k.name} <small>${costOf(k.id)} 能量</small></h4><div class="g">${k.desc}</div></div><span class="pick">${on ? '已选' : '选择'}</span></button>`);
+        c.onclick = click(() => { if (on) return; SAVE.skills = [SAVE.skills[1], k.id]; persist(); again() });
+        list.appendChild(c);
+      });
     } else {
       const grid = el(`<div class="outfits"></div>`);
       OUTFITS.forEach(o => {
@@ -161,6 +230,82 @@ const UI = (() => {
       list.appendChild(grid);
     }
     s.appendChild(list); root.appendChild(s);
+  }
+
+  // ---------- 天赋 ----------
+  function talents() {
+    const s = el(`<section class="screen solid tabbed"></section>`);
+    s.appendChild(header('天赋', null));
+    const free = talentPoints() - talentSpent();
+    const top = el(`<div class="card tpts"><div><b>${free}</b> 点可用</div><small>每升 1 级得 1 点 · 每系投满 5 点解锁终极天赋</small><button class="btn reset">重置（100 金币）</button></div>`);
+    top.querySelector('.reset').onclick = click(() => { if (!talentSpent()) return; if (SAVE.coins < 100) { toast('金币不够'); return } confirmBox('重置天赋？', '所有天赋点退回，可以重新分配。', '重置', () => { SAVE.coins -= 100; SAVE.talents = {}; persist(); show('talents') }) });
+    s.appendChild(top);
+    const grid = el(`<div class="scroll"><div class="tgrid"></div></div>`), g = grid.firstElementChild;
+    TALENT_BR.forEach((br, bi) => {
+      const col = el(`<div class="tcol" style="--bc:${br.col}"><div class="tbr">${br.name}<small>${branchSpent(bi)} 点</small></div></div>`);
+      TALENTS.filter(t => t.br === bi).forEach(t => {
+        const r = tal(t.id), locked = t.cap && branchSpent(bi) < 5, full = r >= t.max;
+        const n = el(`<button class="tnode ${t.cap ? 'cap' : ''} ${locked ? 'lock' : ''} ${r ? 'has' : ''}"><b>${t.name}</b><span class="pips">${'<i class="on"></i>'.repeat(r)}${'<i></i>'.repeat(t.max - r)}</span><small>${locked ? '本系投满 5 点解锁' : t.desc}</small></button>`);
+        n.onclick = click(() => {
+          if (locked) { toast('先在本系投满 5 点'); return }
+          if (full) { toast('已满级'); return }
+          if (talentPoints() - talentSpent() <= 0) { toast('没有天赋点了：升级获得'); return }
+          SAVE.talents[t.id] = r + 1; persist(); vibrate(15); show('talents');
+        });
+        col.appendChild(n);
+      });
+      g.appendChild(col);
+    });
+    s.appendChild(grid); root.appendChild(s);
+  }
+
+  // ---------- 任务 + 签到 ----------
+  function tasks() {
+    Meta.ensure();
+    const s = el(`<section class="screen solid tabbed"></section>`);
+    s.appendChild(header('任务', null));
+    const list = el(`<div class="scroll"></div>`);
+    const L = SAVE.daily.login;
+    list.appendChild(el(`<div class="sec-h"><b>7 日签到</b><span>已连续 ${L.streak} 天${L.claimed ? ' · 明天再来' : ''}</span></div>`));
+    const grid = el(`<div class="login"></div>`);
+    Meta.LOGIN.forEach((r, i) => {
+      const got = i < L.streak, now = i === L.streak && !L.claimed;
+      const t = el(`<button class="lday ${got ? 'got' : ''} ${now ? 'now' : ''} ${r.chest ? 'big' : ''}">第${i + 1}天<span class="v">${r.c ? `<i class="coin" style="width:12px;height:12px"></i>${r.c}` : `<span class="gift">${IC.gift}</span>`}</span></button>`);
+      if (now) t.onclick = click(() => { const res = Meta.claimLogin(); if (!res) return; if (res.chest) chestFx(res.chest, () => show('tasks')); else { Sfx.coin(); toast(`签到成功 +${res.c} 金币`); show('tasks') } });
+      grid.appendChild(t);
+    });
+    list.appendChild(grid);
+    list.appendChild(el(`<div class="sec-h"><b>每日任务</b><span>每天 0 点刷新</span></div>`));
+    Meta.missions().forEach(m => {
+      const c = el(`<div class="card mission ${m.claimed ? 'claimed' : ''}"><div><h4>${m.text}</h4><div class="rw"><span><i class="coin" style="width:12px;height:12px;vertical-align:-2px"></i> ${m.r}</span><span>经验 +${m.x}</span><span>${m.n}/${m.goal}</span></div></div>
+        <button class="btn ${m.done && !m.claimed ? 'primary' : ''}" ${m.done && !m.claimed ? '' : 'disabled'}>${m.claimed ? '已领取' : m.done ? '领取' : '进行中'}</button>
+        <div class="prog"><i style="width:${m.n / m.goal * 100}%"></i></div></div>`);
+      c.querySelector('button').onclick = click(() => { const res = Meta.claimMission(m.id); if (!res) return; Sfx.coin(); toast(`+${res.coins} 金币 · 经验 +${res.xp}` + (res.ups.length ? ` · 升到 Lv ${SAVE.lvl}！` : '')); res.ups.forEach(u => u.chest && chestQueue.push(u.chest)); runChests(() => show('tasks')) });
+      list.appendChild(c);
+    });
+    const st = el(`<div class="card" style="line-height:1.9;font-size:14px"><b>生涯</b><br>等级 ${SAVE.lvl} · 战绩 ${SAVE.wins} 胜 ${SAVE.losses} 负 · 奖杯 ${SAVE.trophies}<br>最快球速 ${SAVE.fastest} km/h · ACE ${SAVE.aces} · 最长连击 ${SAVE.bestCombo}</div>`);
+    list.appendChild(st);
+    s.appendChild(list); root.appendChild(s);
+  }
+
+  // ---------- 宝箱开箱演出 ----------
+  const chestQueue = [];
+  function runChests(done) { const k = chestQueue.shift(); if (!k) { done && done(); return } chestFx(k, () => runChests(done)) }
+  function chestFx(kind, done) {
+    const res = Meta.openChest(kind);
+    const o = el(`<div class="chestfx" style="--cc:${res.col}"><h2>${res.name}</h2><div class="chest"><div class="base"></div><div class="lid"></div><div class="lock"></div></div><div class="loot"></div><p class="note hint">点击打开</p><button class="btn primary" hidden>收下</button></div>`);
+    document.body.appendChild(o);
+    o.onclick = () => {
+      o.onclick = null; o.querySelector('.chest').classList.add('open'); Sfx.coin(); vibrate(30);
+      const items = [`<div><i class="coin"></i><b>+${res.coins}</b>金币</div>`];
+      res.items.forEach(({ it, isNew, lv }) => { const rr = RARITY[it.rar]; items.push(`<div style="border-color:${rr.col};box-shadow:0 0 18px ${rr.col}55"><span style="font-size:28px">${SLOT_IC[it.slot]}</span><span style="color:${rr.col}">${rr.name}</span>${it.name}<small>${isNew ? '新装备！' : '升到 Lv ' + lv}</small></div>`) });
+      if (res.outfit) items.push(`<div><div class="sw" style="background:${res.outfit.shirt}"><i style="background:${res.outfit.shorts}"></i></div>${res.outfit.name}<small>新球衣</small></div>`);
+      setTimeout(() => {
+        const loot = o.querySelector('.loot'); loot.innerHTML = items.join(''); [...loot.children].forEach((c, i) => c.style.animationDelay = i * .15 + 's');
+        o.querySelector('.hint').hidden = true; const b = o.querySelector('.btn'); b.hidden = false;
+        b.onclick = click(e => { e.stopPropagation(); o.remove(); done && done() });
+      }, 420);
+    };
   }
 
   function settings() {
@@ -192,20 +337,21 @@ const UI = (() => {
   function vs(cfg) {
     const a = ARENAS[cfg.arenaIdx], opp = arenaOpps(cfg.arenaIdx)[cfg.round];
     Scene3D.buildArena(a);
-    const s = el(`<section class="screen dim"><div class="head"><button class="round" aria-label="返回">${IC.back}</button></div>
-      <div class="vs">
-        <div class="round-name">${a.name} · ${ROUNDS[cfg.round]}</div>
-        <div class="duel">
-          <div class="fighter" style="background:linear-gradient(180deg,${playerLook().shirt},#0f1a40)">${img(myChar().id, 'n', 'big')}<div class="nm">${esc(myChar().name)}</div><div class="st">等级 ${playerLevel()} · ${myChar().title}</div><div class="st">必杀：${myChar().ult.name}</div></div>
-          <div class="vsx">VS</div>
-          <div class="fighter" style="background:linear-gradient(180deg,${opp.look.shirt},#0f1a40)">${img(opp.id, 'f', 'big flip')}<div class="nm">${esc(opp.name)}</div>${starHtml(opp.t)}<div class="st">${STYLE_NAME[opp.style]}${opp.t >= .45 ? ' · 会放必杀' : ''}</div></div>
+    const myP = powerRating(), opP = Math.round(260 + opp.t * 1300), chest = cfg.round === 2 ? (cfg.arenaIdx === 3 ? 'epic' : 'rare') : 'common';
+    const s = el(`<section class="screen dim"><div class="head"><button class="round" aria-label="返回">${IC.back}</button><h2 style="font-size:16px;color:var(--ball)">${a.name} · ${ROUNDS[cfg.round]}</h2></div>
+      <div class="vs2">
+        <div class="split">
+          <div class="side me2" style="--c:${playerLook().shirt}">${img(myChar().id, 'n', 'big')}<div class="nm">${esc(myChar().name)}</div><div class="st">Lv ${playerLevel()} · ${myChar().title}</div><div class="st">必杀：${myChar().ult.name}</div></div>
+          <div class="side op2" style="--c:${opp.look.shirt}">${img(opp.id, 'f', 'big flip')}<div class="nm">${esc(opp.name)}</div><div class="st">${STYLE_NAME[opp.style]}</div>${starHtml(opp.t)}</div>
+          <div class="vsbadge">VS</div>
         </div>
-        <p style="text-align:center;color:var(--mute);font-size:13px;margin:0">${a.surfName}：${{ city: '弹跳正常，速度中等', clay: '球速慢、弹得高，回合更长', grass: '球速快、弹得低，发球占优', night: '总决赛舞台，对手都是顶尖选手' }[a.id]}</p>
-        <p style="text-align:center;font-size:14px;margin:0">胜利奖励 <i class="coin" style="width:14px;height:14px;vertical-align:-2px"></i> <b>${careerReward(cfg, true)}</b>${cfg.round === 2 && !cfg.replay ? ` + 冠军奖金 <b>${a.prize}</b>` : ''}</p>
+        <div class="cmp"><span>${myP}</span><div class="bar"><i style="width:${myP / (myP + opP) * 100}%"></i></div><span>${opP}</span></div>
+        <div class="vs-info"><span class="tag">${a.surfName}：${{ city: '速度中等', clay: '球慢弹高、回合长', grass: '球快弹低、发球占优', night: '顶尖对手' }[a.id]}</span>
+          <span class="tag">胜利 <i class="coin" style="width:12px;height:12px;vertical-align:-2px"></i> ${careerReward(cfg, true)}${cfg.round === 2 && !cfg.replay ? ' + ' + a.prize : ''}</span><span class="tag">+ ${Meta.CHESTS[chest].name}</span></div>
       </div>
       <button class="btn primary big" id="vsGo">开始比赛</button></section>`);
     root.appendChild(s);
-    s.querySelector('.head button').onclick = click(() => show('career'));
+    s.querySelector('.head button').onclick = click(() => show('home'));
     $('vsGo').onclick = click(() => begin(Object.assign({}, cfg, { opp, setLen: cfg.round === 2 ? 4 : 3 })));
   }
   const careerReward = (cfg, win) => win ? 100 + 60 * cfg.arenaIdx + 30 * cfg.round : 25 + 10 * cfg.arenaIdx;
@@ -238,8 +384,8 @@ const UI = (() => {
     $('shots').querySelectorAll('[data-v]').forEach(b => b.onclick = click(() => { srvType = b.dataset.v; if (!sc.faults) srvPick = srvType; say({ flat: '平击发球：最快，容错小', slice: '切削发球：往外拐，把对手拉出场', kick: '上旋发球：弹得高，最稳' }[srvType]); hud() }));
     $('shots').querySelector('[data-net]').onclick = click(() => { netMode = !netMode; say(netMode ? '上网：下一拍后冲到网前截击' : '回到底线'); hud() });
     $('skills').innerHTML = `<button class="sk ult" data-k="ult" aria-label="必杀技 ${myChar().ult.name}">${img(myChar().id, 'f')}<em>${myChar().ult.name}</em></button>` +
-      [['fire', '爆发', '🔥'], ['zone', 'Zone', '🎯']].map(([k, n, i]) => `<button class="sk" data-k="${k}"><span><b>${i}</b>${n}</span><small>${COST[k]}</small></button>`).join('');
-    $('skills').querySelectorAll('[data-k]').forEach(b => b.onclick = click(() => { if (!skill(b.dataset.k)) toast(P.ep < COST[b.dataset.k] ? `能量不足：需要 ${COST[b.dataset.k]}，击球攒能量` : '必杀技已就绪') }));
+      SAVE.skills.map(k => skDef(k)).map(d => `<button class="sk" data-k="${d.id}"><span><b>${d.icon}</b>${d.name.length > 3 ? d.name.slice(0, 2) : d.name}</span><small>${costOf(d.id)}</small></button>`).join('');
+    $('skills').querySelectorAll('[data-k]').forEach(b => b.onclick = click(() => { if (!skill(b.dataset.k)) toast(P.ep < costOf(b.dataset.k) ? `能量不足：需要 ${costOf(b.dataset.k)}，击球攒能量` : '技能已经生效中') }));
   }
   const PTS = ['0', '15', '30', '40'];
   function hud() {
@@ -260,7 +406,7 @@ const UI = (() => {
     $('shots').querySelectorAll('[data-s]').forEach(b => b.classList.toggle('on', b.dataset.s === shot));
     $('shots').querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === srvType));
     $('shots').querySelector('[data-net]').classList.toggle('on', netMode);
-    $('skills').querySelectorAll('[data-k]').forEach(b => { const c = COST[b.dataset.k]; b.style.setProperty('--e', Math.min(100, P.ep / c * 100)); b.classList.toggle('ready', P.ep >= c) });
+    $('skills').querySelectorAll('[data-k]').forEach(b => { const c = costOf(b.dataset.k); b.style.setProperty('--e', Math.min(100, P.ep / c * 100)); b.classList.toggle('ready', P.ep >= c) });
   }
   let sayT = 0;
   function sayText(t) { const s = $('say'); s.textContent = t; s.style.opacity = 1; sayT = 2.6 }
@@ -320,6 +466,13 @@ const UI = (() => {
     coins += bonus;
     SAVE.coins += coins; persist();
     const trophyWin = cfg.type === 'career' && cfg.round === 2 && w === 0;
+    // 经验、升级、宝箱
+    const lv0 = SAVE.lvl, xpGain = Math.min(170, (w === 0 ? 50 + 15 * (cfg.type === 'career' ? cfg.arenaIdx + cfg.round : cfg.diff * 2) : 20) + st.perfect + st.aces * 3 + st.winners);
+    const ups = Meta.addXp(xpGain), need = Meta.xpNeed(SAVE.lvl);
+    const chest = w === 0 ? (cfg.type === 'career' ? (cfg.round === 2 ? (cfg.arenaIdx === 3 ? 'epic' : 'rare') : 'common') : cfg.diff >= 1 ? 'common' : null) : null;
+    if (chest) chestQueue.push(chest);
+    ups.forEach(u => u.chest && chestQueue.push(u.chest));
+    const prog = Meta.missions().filter(m => !m.claimed && m.n > 0);
     pendingReplay = null;
     Scene3D.ceremony(w, trophyWin); $('hud').classList.add('hidden');
     if (trophyWin) setTimeout(() => banner('🏆 CHAMPION'), 600);
@@ -335,25 +488,31 @@ const UI = (() => {
         </div>
         <div class="reward"><i class="coin"></i><span id="rwN">0</span></div>
         <p>${bonus ? `含表现奖励 ${bonus}（PERFECT 与 ACE）` : '多打 PERFECT 和 ACE 有额外奖励'}</p>
-        <div class="row2"><button class="btn" id="rsBack">${cfg.type === 'career' ? '巡回赛' : '主页'}</button><button class="btn primary" id="rsAgain">${cfg.type === 'career' && w === 0 && cfg.round < 2 && !cfg.replay ? '下一轮' : '再来一场'}</button></div>
+        <div class="xprow"><span>Lv ${SAVE.lvl}</span><div class="xpbar"><i id="rsXp" style="width:${ups.length ? 0 : Math.max(0, SAVE.xp - xpGain) / need * 100}%"></i></div><span>+${xpGain} 经验</span></div>
+        ${ups.map(u => `<div class="lvup">升级！Lv ${u.lvl} · +${u.coins} 金币 · 天赋点 +1${u.chest ? ' · 稀有球包' : ''}</div>`).join('')}
+        ${prog.length ? `<div class="mprog">${prog.map(m => `<div><span>${m.text}</span><b>${m.n}/${m.goal}${m.done ? ' ✓' : ''}</b></div>`).join('')}</div>` : ''}
+        ${chestQueue.length ? `<button class="btn primary" id="rsChest">打开奖励球包 ×${chestQueue.length}</button>` : ''}
+        <div class="row2"><button class="btn" id="rsBack">主页</button><button class="btn primary" id="rsAgain">${cfg.type === 'career' && w === 0 && cfg.round < 2 && !cfg.replay ? '下一轮' : '再来一场'}</button></div>
       </div></div>`);
       document.body.appendChild(m);
       let n = 0; const step = Math.max(1, Math.round(coins / 30));
       const iv = setInterval(() => { n = Math.min(coins, n + step); const e = $('rwN'); if (e) e.textContent = '+' + n; if (n >= coins) clearInterval(iv) }, 30);
       Sfx.coin();
-      $('rsBack').onclick = click(() => { m.remove(); M = null; Scene3D.endCeremony(); show(cfg.type === 'career' ? 'career' : 'home') });
-      $('rsAgain').onclick = click(() => {
+      setTimeout(() => { const x = $('rsXp'); if (x) x.style.width = SAVE.xp / need * 100 + '%' }, 300);
+      if ($('rsChest')) $('rsChest').onclick = click(() => { const b = $('rsChest'); b.remove(); runChests() });
+      $('rsBack').onclick = click(() => { m.remove(); M = null; Scene3D.endCeremony(); runChests(() => show('home')) });
+      $('rsAgain').onclick = click(() => runChests(() => {
         m.remove(); Scene3D.endCeremony();
         if (cfg.type === 'career') { const done = SAVE.career[cfg.arenaIdx]; show('vs', { type: 'career', arenaIdx: cfg.arenaIdx, round: Math.min(done, 2), replay: done >= 3 }) }
         else begin(cfg);
-      });
+      }));
     }, trophyWin ? 4200 : 2600);
   }
 
   // ---------- 球员选择 ----------
   function chars() {
-    const s = el(`<section class="screen solid"></section>`);
-    s.appendChild(header('球员'));
+    const s = el(`<section class="screen solid tabbed"></section>`);
+    s.appendChild(header('球员', null));
     const list = el(`<div class="scroll chars"></div>`);
     const BIAS = { power: ['力量', 1], control: ['控制', -1], move: ['跑速', 1], reach: ['救球范围', 1], serve: ['发球', 1] };
     CHARACTERS.forEach(c => {
@@ -364,7 +523,8 @@ const UI = (() => {
         <div class="char-info"><div class="char-name">${esc(c.name)} <small>${c.title}</small></div>
           <div class="meta"><span class="tag">${STYLE_NAME[c.style] || (c.style === 'net' ? '网前型' : '力量型')}</span><span class="tag">${c.bh === 'one' ? '单手反手' : '双手反手'}</span>${tags}</div>
           <div class="ult-line"><b>必杀 · ${c.ult.name}</b>${c.ult.desc}</div>
-          <button class="btn ${on ? '' : own ? 'blue' : 'primary'} up">${on ? '使用中' : own ? '选用' : `<i class="coin" style="width:16px;height:16px"></i>${c.cost} 解锁`}</button></div></div>`);
+          <div class="bars">${[['力量', 50 + ((c.bias.power || 1) - 1) * 400], ['控制', 50 + (1 - (c.bias.control || 1)) * 400], ['速度', 50 + (c.bias.move || 0) * 60], ['救球', 50 + (c.bias.reach || 0) * 150], ['发球', 50 + ((c.bias.serve || 1) - 1) * 400]].map(([n, v]) => `<span>${n}</span><i><b style="width:${clamp(v, 15, 100)}%"></b></i>`).join('')}</div>
+          <button class="btn ${on ? '' : 'blue'} up">${on ? '使用中' : '选用'}</button></div></div>`);
       card.querySelector('button').onclick = click(() => {
         if (on) return;
         if (!own) { if (SAVE.coins < c.cost) { toast('金币不够'); return } SAVE.coins -= c.cost; SAVE.chars.push(c.id); Sfx.coin() }

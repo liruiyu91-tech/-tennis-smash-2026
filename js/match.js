@@ -13,7 +13,8 @@ let PH = null;                // 你的正/反手表现 {f:[击中, 失误], b:[
 let deadT = 0, nextFn = null;
 let U = {}, AU = {};          // 玩家 / 对手的必杀技状态
 const P_REACT = .18;          // 玩家分腿垫步反应时间
-const COST = { fire: 50, zone: 50, ult: 100 };
+// 技能消耗：必杀 100；"爆发"类技能受天赋减免
+function costOf(k) { if (k === 'ult') return 100; const d = skDef(k); return d ? d.cost - (d.fire ? 6 * tal('fire') : 0) : 999 }
 
 const listeners = [];
 function onGame(fn) { listeners.push(fn) }
@@ -90,10 +91,11 @@ function hitBall(side, from, tx, ty, v, spin, margin, serve, box, kind, q, extra
   return kmh;
 }
 function errDisc(r) { const d = r * Math.sqrt(Math.random()), a = Math.random() * Math.PI * 2; return [d * Math.cos(a), d * Math.sin(a) * 1.25] }
-function perfectWin() { return (zoneN > 0 ? .12 : .065) * (U.wallT > 0 ? 2.5 : 1) }
+function perfectWin() { return (zoneN > 0 ? .12 : .065) * (U.wallT > 0 ? 2.5 : 1) * (1 + .1 * tal('timing')) }
 function lateWin() { return (zoneN > 0 ? .25 : .15) * (U.wallT > 0 ? 1.6 : 1) }
 function playerReach(pl) { return PS.reach + (zoneN > 0 ? .8 : 0) + (U.wallT > 0 ? 1.2 : 0) - ((pl || plan || {}).reachPen || 0) }
 function moveSpeed() { return PS.move * (.65 + .35 * P.st / 100) * (U.flashT > 0 ? 1.9 : 1) * (U.dash ? 3 : 1) }
+const pReact = () => U.focusT > 0 ? .02 : PS.react;
 function quality(d) {
   if (Math.abs(d) <= perfectWin()) return 'perfect';
   if (Math.abs(d) <= .16) return 'good';
@@ -172,21 +174,31 @@ function manualMove(x, y) {
 function playerContact(ts, aim) {
   const pl = plan; plan = null; buffered = null;
   const pf = pl.x >= P.x ? 'f' : 'b';
-  if (Math.hypot(P.x - pl.x, P.y - pl.y) > playerReach(pl)) { pop('够不到！', P.x, P.y, 2.4, '#ff7a7a'); PH[pf][1]++; emit('whiff', { side: 0 }); return }
+  if (Math.hypot(P.x - pl.x, P.y - pl.y) > playerReach(pl)) {
+    if (U.guard) {                                         // 神救：飞身把球挑回去
+      U.guard = false; pop('神救！', pl.x, pl.y, 2.6, '#9fd8ff', true);
+      hitBall(0, { x: pl.x, y: pl.y, z: Math.max(.3, pl.z) }, rnd(-1.5, 1.5), -(HL - 2), 12, 'top', 1, false, null, 'ground', 'good', { lunge: true, low: pl.z < .5 });
+      rallyHits++; combo++; return;
+    }
+    pop('够不到！', P.x, P.y, 2.4, '#ff7a7a'); PH[pf][1]++; emit('whiff', { side: 0 }); return;
+  }
   PH[pf][0]++;
   const q = quality(pl.t - ts);
   const kind = shotKind(pl);
   const base = SHOTS[kind];
   let v = base.speed * PS.power, err = base.err * PS.control, margin = base.margin, spin = base.spin;
-  const strainP = stretch(pl, moveSpeed(), P_REACT);
+  const strainP = stretch(pl, moveSpeed(), pReact());
   const extra = { lunge: strainP > .7 && pl.kind === 'ground', low: pl.z < .5, curve: 0, side: 0 };
-  if (q === 'perfect') { v *= 1.08; err *= .45; margin += .12; st.perfect++; hitStop = .07 }
+  if (q === 'perfect') { v *= 1.08 * (PS.perks.has('perfectPow') ? 1.06 : 1); err *= .45; margin += .12; st.perfect++; hitStop = .07 }
   else if (q === 'good') err *= .8;
   else { v *= .92; err *= 1.45; margin -= .3 }
   if (kind === 'drop' && !U.blossom) err *= Math.max(1, Math.abs(pl.y) / 8);   // 底线放小球很难
   err *= (1 + .7 * (1 - P.st / 100)) * (1 + 1.2 * strainP) * (1 + .09 * rallyHits) * incomingErr(pl, kind);
+  if (U.focusT > 0) err *= .75;
+  if (tal('clutch') && strainP > .6) { err *= .7; margin += .2 }                                   // 绝地反击
+  if (tal('killer') && strainP < .3 && pl.z > .7 && Math.abs(pl.y) < HL - 2 && pl.kind === 'ground') { v *= 1.1; err *= .8 }   // 终结者
   // 弧线球：滑动轨迹带弧度 → 侧旋，球在空中拐弯
-  if (aim && Math.abs(aim.curve || 0) > .25 && kind !== 'smash') { extra.side = aim.curve * 240; extra.curve = aim.curve; err *= 1.1; pop('弧线!', pl.x, pl.y, 3, '#9fd8ff') }
+  if (aim && Math.abs(aim.curve || 0) > .25 && kind !== 'smash') { extra.side = aim.curve * 240 * (tal('curve') ? 1.35 : 1); extra.curve = aim.curve; if (!tal('curve')) err *= 1.1; pop('弧线!', pl.x, pl.y, 3, '#9fd8ff') }
   if (fire) { v *= 1.28; err *= .7; fire = false; extra.fire = true }
   if (zoneN > 0) zoneN--;
   // 必杀技
@@ -201,12 +213,13 @@ function playerContact(ts, aim) {
   let tx = tgt.x, ty = tgt.y;
   const [ex, ey] = errDisc(err); tx += ex; ty = Math.min(-.3, ty + ey);
   if (kind === 'angle' && q !== 'perfect') extra.mods = Object.assign({ reachPen: .15 }, extra.mods || {});
+  if (PS.perks.has('heavy') && (kind === 'topspin' || kind === 'angle')) extra.mods = Object.assign({ errMul: 1.2 }, extra.mods || {});
   const kmh = hitBall(0, { x: pl.x, y: pl.y, z: pl.z }, tx, ty, v, spin, margin, false, null, pl.kind === 'ground' ? kind : pl.kind, q, extra);
   if (extra.tweener) pop('胯下击球!', pl.x, pl.y, 2.6, '#ffd27a', true);
   combo++; rallyHits++; st.hits++; st.fastest = Math.max(st.fastest, kmh);
   SAVE.bestCombo = Math.max(SAVE.bestCombo, combo);
   P.st = Math.max(0, P.st - base.st * PS.drain);
-  P.ep = Math.min(100, P.ep + 8 + (q === 'perfect' ? 6 : 0) + (combo >= 3 ? 3 : 0));
+  P.ep = Math.min(100, P.ep + (8 + (q === 'perfect' ? 6 : 0) + (combo >= 3 ? 3 : 0)) * PS.energy);
   const [qt, qc] = QTXT[q];
   pop(qt, pl.x, pl.y, 2.5, qc, q === 'perfect');
   emit('hud');
@@ -238,7 +251,7 @@ function aiContact() {
   } else if (pl.kind === 'volley') {                       // 网前截击：你在底线就放小球，否则压向空当
     kind = 'volley';
     if (P.y > HL - 1 && Math.random() < .2 + .25 * t) { spin = 'drop'; v = 9; tx = rnd(-2.5, 2.5); ty = 2.2; margin = .1 }
-    else { spin = 'flat'; v = 18 + 3 * t; tx = open * rnd(1.8, 3.0); ty = rnd(7, 9.5); margin = .2 }
+    else { spin = 'flat'; v = 17 + 3 * t; tx = open * rnd(1.4, 2.8); ty = rnd(7, 9.5); margin = .2; err *= 1.15 }
     if (pl.z < .8) err *= 1.4;                             // 低球截击（半截击）更难
     home = { x: clamp(pl.x * .5, -2, 2), y: -3.2 };
   } else if (P.y < 6.5) {                                  // 你上网了：穿越或挑高
@@ -250,7 +263,7 @@ function aiContact() {
     home = { x: 0, y: -HL - 1.6 };
   } else if (retSrv && (pl.spd > 34 || strain > .35)) {   // 重发球：挡回中路深区
     v *= .8; tx = rnd(-1.8, 1.8); ty = L.depth - .6; margin = .45; err *= .9;
-  } else if (P.y > HL + .5 && Math.abs(pl.y) < HL - 1 && strain < .35 && Math.random() < L.drop * .6) {   // 你退得太深：放小球
+  } else if (Math.abs(pl.y) < HL - 1 && strain < .35 && Math.random() < L.drop * (P.y > HL + 1.5 ? .8 : .25)) {   // 你退得太深：放小球
     spin = 'drop'; v = 10; ty = 2.4; tx = rnd(-2.5, 2.5); err *= .7;
     say(`${M.opp.name} 放小球！`);
   } else if (inside && pl.z > .7 && strain < .4 && !retSrv) {   // 浅球：进攻空当，可能随球上网
@@ -300,18 +313,23 @@ function aiGainEnergy(n) {
 
 // ================= 必杀技 / 技能 =================
 function skill(k) {
-  if (!M || phase === 'over' || P.ep < COST[k]) return false;
+  if (!M || phase === 'over' || P.ep < costOf(k)) return false;
   if (k === 'ult') return useUlt();
-  P.ep -= COST[k];
+  if ((k === 'fire' && fire) || (k === 'ace' && U.aceSrv) || (k === 'guard' && U.guard) || (k === 'zone' && zoneN > 0) || (k === 'focus' && U.focusT > 0)) { say('技能已经生效中'); return false }
+  P.ep -= costOf(k);
   if (k === 'fire') { fire = true; say('🔥 爆发：下一拍更快更准') }
-  if (k === 'zone') { zoneN = 3; say('🎯 Zone：3 拍内判定更宽、够得更远') }
+  if (k === 'zone') { zoneN = PS.perks.has('zone') ? 5 : 3; say(`🎯 Zone：${zoneN} 拍内判定更宽、够得更远`) }
+  if (k === 'recover') { P.st = Math.min(100, P.st + 45); say('💧 回气：体力恢复') }
+  if (k === 'ace') { U.aceSrv = true; say('🚀 精准发球：下一个发球更快更准') }
+  if (k === 'guard') { U.guard = true; say('🛡️ 神救：下一个够不到的球会自动救回') }
+  if (k === 'focus') { U.focusT = 8; say('🧠 专注：8 秒内起步更早、更稳') }
   emit('skill', { k }); emit('hud');
   return true;
 }
 function useUlt() {
   const u = M.char.ult;
   if (U.meteor || U.phantom || U.blossom || U.volcano || U.eagle || U.freeze) { say('必杀技已经准备好了'); return false }
-  P.ep -= COST.ult; st.ults++;
+  P.ep -= costOf("ult"); st.ults++;
   switch (u.id) {
     case 'meteor': U.meteor = true; break;
     case 'phantom': U.phantom = true; break;
@@ -383,6 +401,7 @@ function serve(side, d, aim) {
     err = { perfect: .3, good: .65, early: 1.3, late: 1.3 }[q] * (first ? 1 : .6) * S.err * PS.srvErr * (1 + .5 * (1 - P.st / 100)) * (.6 + .9 * pw * pw);
     margin = { perfect: .2, good: .1, early: -.25, late: -.25 }[q] + S.m + (first ? 0 : .1);
     if (q === 'perfect') { v += 4; st.perfect++; hitStop = .06 }
+    if (U.aceSrv) { U.aceSrv = false; v *= 1.12; err *= .5; extra.fire = true }
     if (U.eagle) { U.eagle = false; v = 64; spin = 'flat'; err *= .4; margin = .12; extra.ult = 'eagle'; extra.fire = true; extra.jump = true; extra.mods = { reachPen: .9 } }
   } else {
     // 对手发球：选类型（发球型球员多平击）和落点（外角 / 中路 T 点 / 追身，会照顾你的弱侧）
@@ -544,7 +563,7 @@ function movePlayers(dt) {
     return;
   }
   let tx, ty, react = false;
-  if (phase === 'rally' && plan && plan.side === 0) { const h = hitSpot(plan, P, 0); tx = h.x; ty = h.y; react = now - plan.made < P_REACT }
+  if (phase === 'rally' && plan && plan.side === 0) { const h = hitSpot(plan, P, 0); tx = h.x; ty = h.y; react = now - plan.made < pReact() }
   else if (P.manual) { tx = P.manual.x; ty = P.manual.y }
   else { tx = P.x * .4; ty = netMode ? 3.6 : HL + .9 }
   const m = react ? (P.run = 0) : moveTo(P, tx, ty, moveSpeed(), dt);
@@ -576,6 +595,6 @@ function tick(dt) {
     }
   }
   movePlayers(dt);
-  for (const o of [U, AU]) for (const k of ['wallT', 'flashT']) if (o[k] > 0) o[k] -= dt;
+  for (const o of [U, AU]) for (const k of ['wallT', 'flashT', 'focusT']) if (o[k] > 0) o[k] -= dt;
   if (phase === 'dead' && now >= deadT) { phase = 'idle'; const f = nextFn; nextFn = null; f && f() }
 }
