@@ -391,7 +391,7 @@ const Scene3D = (() => {
   const PREP = { fh_top: ['FH_PREP', 'FH_DROP'], fh_flat: ['FH_PREP', 'FH_DROP'], fh_lob: ['FH_PREP', 'FH_DROP'], fh_slice: ['FH_SL_PREP', 'FH_SL_PREP'], fh_drop: ['FH_SL_PREP', 'FH_SL_PREP'],
     b2_top: ['B2_PREP', 'B2_DROP'], b2_flat: ['B2_PREP', 'B2_DROP'], b2_lob: ['B2_PREP', 'B2_DROP'], b1_top: ['B1_PREP', 'B1_DROP'], b1_lob: ['B1_PREP', 'B1_DROP'],
     bs_slice: ['BS_PREP', 'BS_PREP'], bs_drop: ['BS_PREP', 'BS_PREP'], sm: ['SM_BACK', 'SM_BACK'], vo: ['VO_BACK', 'VO_BACK'], vb: ['VB_BACK', 'VB_BACK'] };
-  const STYLE_OF = { topspin: 'top', top: 'top', flat: 'flat', slice: 'slice', lob: 'lob', drop: 'drop', kick: 'top' };
+  const STYLE_OF = { topspin: 'top', top: 'top', flat: 'flat', slice: 'slice', lob: 'lob', drop: 'drop', kick: 'top', angle: 'top', heavy: 'top', sslice: 'slice' };
   function strokeKey(fore, bh, style) {
     if (fore) return 'fh_' + style;
     if (style === 'slice' || style === 'drop') return 'bs_' + style;

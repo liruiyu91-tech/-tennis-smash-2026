@@ -54,4 +54,6 @@
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+  // 离线缓存（需要 https 或本机）
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 })();

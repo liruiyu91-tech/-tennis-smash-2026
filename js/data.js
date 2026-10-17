@@ -14,11 +14,20 @@ const SHOTS = {
   slice:   { name: '切削',   speed: 19, depth: 8.6, spin: 'slice', err: .75, margin: .3,  st: 1.5 },
   lob:     { name: '高吊',   speed: 12, depth: 9.9, spin: 'top',   err: .9,  margin: .9,  st: 1.5 },
   drop:    { name: '放小球', speed: 10, depth: 2.4, spin: 'drop',  err: .9,  margin: .1,  st: 1 },
+  angle:   { name: '大角度', speed: 20, depth: 5.6, spin: 'heavy', err: .95, margin: .45, st: 2 },
   smash:   { name: '扣杀',   speed: 33, depth: 8.6, spin: 'flat',  err: .9,  margin: .15, st: 4 },
   volley:  { name: '截击',   speed: 21, depth: 8.2, spin: 'flat',  err: .8,  margin: .2,  st: 1.5 },
+  dvolley: { name: '小球截击', speed: 8.5, depth: 2.0, spin: 'drop', err: .8, margin: .08, st: 1 },
+  lvolley: { name: '高吊截击', speed: 11, depth: 9.8, spin: 'top',  err: .9,  margin: .9,  st: 1.5 },
+};
+// 发球类型：平击最快；切削带侧旋往外拐、把接发方拉出场外；上旋（kick）弹得高、最稳，二发常用
+const SERVES = {
+  flat:  { name: '平击', v: 1,   err: 1,   m: 0,   spin: 'flat' },
+  slice: { name: '切削', v: .92, err: .85, m: .12, spin: 'sslice' },
+  kick:  { name: '上旋', v: .84, err: .65, m: .3,  spin: 'kick' },
 };
 // 旋转（rad/s）：top>0 上旋、<0 下旋；side 侧旋。1 rad/s ≈ 9.55 rpm
-const SPINS = { flat: { top: 60, side: 0 }, top: { top: 280, side: 0 }, slice: { top: -190, side: 45 }, drop: { top: -320, side: 0 }, kick: { top: 300, side: 110 } };
+const SPINS = { flat: { top: 60, side: 0 }, top: { top: 280, side: 0 }, slice: { top: -190, side: 45 }, drop: { top: -320, side: 0 }, kick: { top: 300, side: 110 }, heavy: { top: 380, side: 0 }, sslice: { top: 50, side: -160 } };
 
 // ================= 赛场 =================
 const ARENAS = [

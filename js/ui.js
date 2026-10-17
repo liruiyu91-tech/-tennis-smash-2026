@@ -19,6 +19,7 @@ const UI = (() => {
     bolt: svg('<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>'),
     top: svg('<path d="M4 15c3-9 13-9 16 0" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="m16 15 4 1 1-4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'),
     flat: svg('<path d="M3 12h16m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>'),
+    angle: svg('<path d="M4 20 19 6m0 0h-7m7 0v7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'),
     slice: svg('<path d="M3 9c6 7 12 7 18 4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="m17 10 4 3-3 3" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'),
     lob: svg('<path d="M3 20C6 2 18 2 21 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'),
     drop: svg('<path d="M3 14c4-8 8-8 10 4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="19" r="2.4"/>'),
@@ -51,6 +52,15 @@ const UI = (() => {
     return h;
   }
 
+  // iPhone Safari 里提示"添加到主屏幕"：全屏、离线、像 App 一样打开
+  function installHint(s) {
+    const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+    if (!ios || standalone || SAVE.a2hsHidden) return;
+    const h = el(`<div class="a2hs"><b>装到主屏幕，像 App 一样玩</b><span>点 Safari 底部的 <i>分享</i> → <i>添加到主屏幕</i>，全屏、离线也能玩</span><button aria-label="关闭">✕</button></div>`);
+    h.querySelector('button').onclick = click(() => { SAVE.a2hsHidden = true; persist(); h.remove() });
+    s.appendChild(h);
+  }
   function home() {
     const next = nextCareer();
     const s = el(`<section class="screen" id="home">
@@ -65,6 +75,7 @@ const UI = (() => {
         <div class="row3 four"><button class="btn" id="bChar">${IC.star}球员</button><button class="btn" id="bGear">${IC.racket}装备</button><button class="btn" id="bWard">${IC.shirt}球衣</button><button class="btn" id="bSet">${IC.cog}设置</button></div>
       </div></section>`);
     root.appendChild(s);
+    installHint(s);
     $('bCareer').onclick = click(() => show('career'));
     $('bQuick').onclick = click(() => show('quick'));
     $('bTrain').onclick = click(() => begin({ type: 'train', arenaIdx: SAVE.quick.arena, opp: COACH, setLen: 4 }));
@@ -219,9 +230,12 @@ const UI = (() => {
     $('avP').innerHTML = img(myChar().id, 'n'); $('avA').innerHTML = img(cfg.opp.id, 'n');
     $('sbTag').textContent = cfg.type === 'train' ? '训练场 · 连续回球' : cfg.type === 'career' ? `${ARENAS[cfg.arenaIdx].short} · ${ROUNDS[cfg.round]}` : `快速比赛 · ${QUICK[cfg.diff].name}`;
     $('pauseBtn').innerHTML = IC.pause; $('pauseBtn').onclick = click(pauseMenu);
-    const shots = [['topspin', '上旋', IC.top], ['flat', '平击', IC.flat], ['slice', '切削', IC.slice], ['lob', '高吊', IC.lob], ['drop', '放小球', IC.drop]];
-    $('shots').innerHTML = shots.map(([k, n, i]) => `<button class="chip" data-s="${k}">${i}${n}</button>`).join('') + `<button class="chip net" data-net>${IC.net}上网</button>`;
+    const shots = [['topspin', '上旋', IC.top], ['flat', '平击', IC.flat], ['slice', '切削', IC.slice], ['angle', '大角度', IC.angle], ['lob', '高吊', IC.lob], ['drop', '小球', IC.drop]];
+    const srvs = [['flat', '平击发球', IC.flat], ['slice', '切削发球', IC.slice], ['kick', '上旋发球', IC.top]];
+    $('shots').innerHTML = shots.map(([k, n, i]) => `<button class="chip" data-s="${k}">${i}${n}</button>`).join('') + `<button class="chip net" data-net>${IC.net}上网</button>` +
+      srvs.map(([k, n, i]) => `<button class="chip srv" data-v="${k}">${i}${n}</button>`).join('');
     $('shots').querySelectorAll('[data-s]').forEach(b => b.onclick = click(() => { shot = b.dataset.s; hud() }));
+    $('shots').querySelectorAll('[data-v]').forEach(b => b.onclick = click(() => { srvType = b.dataset.v; if (!sc.faults) srvPick = srvType; say({ flat: '平击发球：最快，容错小', slice: '切削发球：往外拐，把对手拉出场', kick: '上旋发球：弹得高，最稳' }[srvType]); hud() }));
     $('shots').querySelector('[data-net]').onclick = click(() => { netMode = !netMode; say(netMode ? '上网：下一拍后冲到网前截击' : '回到底线'); hud() });
     $('skills').innerHTML = `<button class="sk ult" data-k="ult" aria-label="必杀技 ${myChar().ult.name}">${img(myChar().id, 'f')}<em>${myChar().ult.name}</em></button>` +
       [['fire', '爆发', '🔥'], ['zone', 'Zone', '🎯']].map(([k, n, i]) => `<button class="sk" data-k="${k}"><span><b>${i}</b>${n}</span><small>${COST[k]}</small></button>`).join('');
@@ -242,7 +256,9 @@ const UI = (() => {
     $('ptP').textContent = p0; $('ptA').textContent = p1;
     $('gmP').textContent = train ? '' : sc.games[0]; $('gmA').textContent = train ? '' : sc.games[1];
     $('srvP').classList.toggle('on', !train && sc.server === 0); $('srvA').classList.toggle('on', !train && sc.server === 1);
+    $('shots').classList.toggle('srvmode', serving() || (phase === 'serve' && sc.server === 0 && !train));
     $('shots').querySelectorAll('[data-s]').forEach(b => b.classList.toggle('on', b.dataset.s === shot));
+    $('shots').querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === srvType));
     $('shots').querySelector('[data-net]').classList.toggle('on', netMode);
     $('skills').querySelectorAll('[data-k]').forEach(b => { const c = COST[b.dataset.k]; b.style.setProperty('--e', Math.min(100, P.ep / c * 100)); b.classList.toggle('ready', P.ep >= c) });
   }
@@ -509,7 +525,7 @@ const UI = (() => {
     if (k === ' ' || k === 'ArrowUp') swing({ x: 0, d: .6, tap: true });
     else if (k === 'ArrowLeft') swing({ x: -.85, d: .65 });
     else if (k === 'ArrowRight') swing({ x: .85, d: .65 });
-    else if (k >= '1' && k <= '5') { shot = ['topspin', 'flat', 'slice', 'lob', 'drop'][k - 1]; hud() }
+    else if (k >= '1' && k <= '6') { shot = ['topspin', 'flat', 'slice', 'angle', 'lob', 'drop'][k - 1]; hud() }
     else if (k === 'Escape') pauseMenu();
   });
 
